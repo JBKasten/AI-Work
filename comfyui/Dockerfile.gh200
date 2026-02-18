@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ComfyUI GH200 Dockerfile
+# NVIDIA GH200 Grace Hopper Superchip — ARM64 + Hopper GPU (sm_90)
+# CUDA 12.4, BF16, Flash Attention 2
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gh200.yml up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM nvcr.io/nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+# GH200 is ARM64 — build/run on GH200 host; Docker will use native arch automatically
+
+ARG COMFYUI_TAG=latest
+LABEL org.opencontainers.image.title="ComfyUI GH200 (AI-Stack)"
+LABEL org.opencontainers.image.description="ComfyUI optimised for NVIDIA GH200 Grace Hopper (sm_90, BF16, FA2)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+# Hopper native BF16 + TF32 — maximises throughput on GH200
+ENV NVIDIA_TF32_OVERRIDE=1
+ENV TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    ffmpeg \
+    libgl1 \
+    libglib2.0-0 \
+    ninja-build \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && python -m pip install --upgrade pip
+
+WORKDIR /app
+
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
+    && if [ "${COMFYUI_TAG}" != "latest" ]; then git checkout "${COMFYUI_TAG}"; fi
+
+# PyTorch nightly with CUDA 12.4 — best Hopper/sm_90 kernel coverage
+RUN pip install --no-cache-dir \
+    --pre torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/cu124
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Flash Attention 2 — native sm_90 kernels, major speedup on GH200
+RUN pip install --no-cache-dir packaging && \
+    pip install --no-cache-dir flash-attn --no-build-isolation
+
+# xformers for additional memory-efficient attention ops
+RUN pip install --no-cache-dir xformers --index-url https://download.pytorch.org/whl/nightly/cu124 || \
+    echo "xformers install skipped (optional)"
+
+# ComfyUI Manager
+RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git custom_nodes/ComfyUI-Manager \
+    && pip install --no-cache-dir -r custom_nodes/ComfyUI-Manager/requirements.txt
+
+RUN mkdir -p models/checkpoints models/vae models/loras models/controlnet \
+    models/upscale_models models/embeddings models/clip \
+    output input custom_nodes
+
+EXPOSE 8188
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD curl -f http://localhost:8188/ || exit 1
+
+ENTRYPOINT ["python", "main.py"]
+# BF16 is native on Hopper — use instead of FP16 for better accuracy + speed
+CMD ["--listen", "0.0.0.0", "--port", "8188", "--bf16-unet", "--bf16-vae"]

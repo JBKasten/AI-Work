@@ -139,3 +139,26 @@ model_list:
     litellm_params:
       model: ollama/phi3
       api_base: os.environ/OLLAMA_BASE_URL
+
+  # ───────── vLLM (high-throughput local inference) ─────────
+  # Activate with: docker compose --profile vllm up
+  # or for GH200:  docker compose -f docker-compose.yml -f docker-compose.gh200.yml --profile vllm up
+  # Set VLLM_MODEL in .env to choose the model.
+  - model_name: vllm/local
+    litellm_params:
+      model: openai/local
+      api_base: http://vllm:8000/v1
+      api_key: "none"
+
+  # Alias matching the exact HF model name for convenience
+  - model_name: vllm/llama-3.2-3b
+    litellm_params:
+      model: openai/meta-llama/Llama-3.2-3B-Instruct
+      api_base: http://vllm:8000/v1
+      api_key: "none"
+
+  - model_name: vllm/llama-3.1-8b
+    litellm_params:
+      model: openai/meta-llama/Llama-3.1-8B-Instruct
+      api_base: http://vllm:8000/v1
+      api_key: "none"

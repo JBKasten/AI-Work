@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# vLLM GH200 Dockerfile
+# ARM64 + Hopper (sm_90), BF16, Flash Attention 2, PagedAttention
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM nvcr.io/nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+LABEL org.opencontainers.image.title="vLLM GH200 (AI-Stack)"
+LABEL org.opencontainers.image.description="vLLM optimised for NVIDIA GH200 Grace Hopper (sm_90)"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV NVIDIA_TF32_OVERRIDE=1
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    git \
+    curl \
+    wget \
+    ninja-build \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && python -m pip install --upgrade pip
+
+# PyTorch nightly for best Hopper support
+RUN pip install --no-cache-dir \
+    --pre torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/cu124
+
+# Flash Attention 2 — critical for Hopper throughput
+RUN pip install --no-cache-dir packaging && \
+    pip install --no-cache-dir flash-attn --no-build-isolation
+
+# vLLM — installs with CUDA 12.4 support
+RUN pip install --no-cache-dir vllm
+
+# HuggingFace Hub for model downloads
+RUN pip install --no-cache-dir huggingface-hub
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Start vLLM OpenAI-compatible server
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
+CMD [ \
+    "--host", "0.0.0.0", \
+    "--port", "8000", \
+    "--model", "meta-llama/Llama-3.2-3B-Instruct", \
+    "--dtype", "bfloat16", \
+    "--max-model-len", "8192", \
+    "--gpu-memory-utilization", "0.85", \
+    "--enable-prefix-caching" \
+]

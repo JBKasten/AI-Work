@@ -7,14 +7,16 @@ A single-install package that wires together three open-source AI tools:
 | **Open WebUI** | Chat frontend — talk to any LLM | 8080 |
 | **LiteLLM** | LLM proxy — single OpenAI-compatible endpoint for 100+ models | 4000 |
 | **ComfyUI** | Node-based Stable Diffusion / image generation backend | 8188 |
-| **Nginx** | Reverse proxy — single URL for everything | **80** (configurable) |
+| **Nginx** | Reverse proxy — single URL for everything | **80** / **443** |
 | **PostgreSQL** | LiteLLM usage tracking & config persistence | 5432 (internal) |
 | **Ollama** _(optional)_ | Local model runner (CPU or GPU) | 11434 |
+| **vLLM** _(optional)_ | High-throughput local inference — OpenAI-compatible | 8000 |
 
 Everything is wired together out of the box:
 - Open WebUI talks to **LiteLLM** for all LLM calls
-- Open WebUI is pre-configured to use **ComfyUI** for image generation
-- LiteLLM fan-outs to whichever cloud or local providers you configure
+- Open WebUI uses **ComfyUI** for image generation
+- LiteLLM routes to whichever cloud or local providers you configure
+- **vLLM** plugs straight into LiteLLM as a local inference backend
 
 ---
 
@@ -38,80 +40,139 @@ Open **http://localhost** in your browser.
 
 ---
 
-## Manual setup
+## Compose variants
 
-```bash
-cp .env.example .env
-# edit .env and add your API keys
-docker compose up -d --build
-```
-
-### With NVIDIA GPU
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
-```
+| Variant | Command |
+|---------|---------|
+| CPU / cloud APIs only | `docker compose up -d --build` |
+| NVIDIA GPU (x86_64) | `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build` |
+| **GH200 Grace Hopper** (ARM64, sm_90) | `docker compose -f docker-compose.yml -f docker-compose.gh200.yml up -d --build` |
+| HTTPS / Let's Encrypt | `docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d` |
+| vLLM local inference (x86_64 GPU) | add `--profile vllm` to any command above |
 
 ---
 
 ## Configuration
 
-### Add API keys
+### API keys
 
-Edit `.env` and set whichever providers you want:
+Edit `.env` and set whichever providers you use:
 
 ```dotenv
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GROQ_API_KEY=gsk_...
 GOOGLE_API_KEY=AIza...
-# etc.
+MISTRAL_API_KEY=...
 ```
 
-Then restart: `docker compose up -d`
+Then: `docker compose up -d`
 
 ### Add / remove LLM models
 
-Edit `litellm/config.yaml`. Full model list:
+Edit `litellm/config.yaml`. Supports 100+ providers:
 https://docs.litellm.ai/docs/providers
 
-Restart LiteLLM after changes: `docker compose restart litellm`
-
-### Use local Ollama models
-
-Start the Ollama sidecar:
 ```bash
-docker compose --profile ollama up -d
+docker compose restart litellm
 ```
 
-Pull a model:
+### Local Ollama models
+
 ```bash
+# Start Ollama sidecar
+docker compose --profile ollama up -d
+
+# Pull a model
 docker exec ai-ollama ollama pull llama3.2
 ```
 
-The model appears automatically in Open WebUI as `ollama/llama3.2`.
+Model appears in Open WebUI as `ollama/llama3.2`.
 
-### Download Stable Diffusion models for ComfyUI
+### vLLM — high-throughput local inference
 
-Place checkpoint files in the `comfyui-models` Docker volume. Easiest way:
+vLLM is significantly faster than Ollama on NVIDIA GPUs, especially on GH200.
+It serves an OpenAI-compatible API and is pre-wired into LiteLLM.
 
 ```bash
-docker exec -it ai-comfyui bash
-# Inside container:
-wget -O models/checkpoints/v1-5-pruned-emaonly.safetensors \
-  https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors
+# Set which model to load in .env
+VLLM_MODEL=meta-llama/Llama-3.2-3B-Instruct
+HF_TOKEN=hf_xxx   # required for gated models (Llama, etc.)
+
+# Start with vLLM
+docker compose -f docker-compose.yml -f docker-compose.vllm.yml --profile vllm up -d --build
+
+# On GH200 with vLLM
+docker compose -f docker-compose.yml -f docker-compose.gh200.yml --profile vllm up -d --build
 ```
 
-Or copy from host:
+Models available in Open WebUI as `vllm/local`, `vllm/llama-3.2-3b`, etc.
+
+### GH200 Grace Hopper (ARM64)
+
+The GH200 compose override uses:
+- `nvcr.io/nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04` ARM64 base
+- PyTorch nightly with `cu124` kernels targeting `sm_90`
+- **Flash Attention 2** — native Hopper kernels (major throughput gain)
+- **BF16** precision — native on Hopper, better accuracy than FP16
+- TF32 enabled for matmuls
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gh200.yml up -d --build
+```
+
+Prerequisite check:
+```bash
+docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+```
+
+### ComfyUI model packs
+
+Download common Stable Diffusion / FLUX model packs with one command:
+
+```bash
+# Stable Diffusion 1.5 (~2 GB)
+bash scripts/download-models.sh sd15
+
+# SDXL 1.0 (~12 GB)
+bash scripts/download-models.sh sdxl
+
+# FLUX.1-schnell (~24 GB)
+bash scripts/download-models.sh flux-schnell
+
+# FLUX.1-dev (~24 GB, requires HuggingFace token + license acceptance)
+HF_TOKEN=hf_xxx bash scripts/download-models.sh flux-dev
+
+# Upscalers (ESRGAN, ~400 MB)
+bash scripts/download-models.sh upscalers
+
+# Everything (large!)
+bash scripts/download-models.sh all
+```
+
+Or copy models manually:
 ```bash
 docker cp /path/to/model.safetensors ai-comfyui:/app/models/checkpoints/
 ```
 
-### Connect Open WebUI to ComfyUI for image generation
+### Connect Open WebUI to ComfyUI
 
-1. In Open WebUI, go to **Settings → Images**
-2. Set Image Generation Engine to **ComfyUI**
-3. URL: `http://comfyui:8188` (internal Docker DNS — already set as env var)
+1. **Settings → Images**
+2. Image Generation Engine → **ComfyUI**
+3. URL: `http://comfyui:8188`
+
+### HTTPS / Let's Encrypt
+
+```bash
+# Domain DNS must point to this server first
+bash scripts/setup-ssl.sh your.domain.com admin@your.domain.com
+```
+
+This will:
+1. Issue a cert via Let's Encrypt ACME
+2. Swap Nginx to the SSL config
+3. Start the certbot auto-renewal container
+4. Restart everything on port 443
 
 ---
 
@@ -132,16 +193,16 @@ docker cp /path/to/model.safetensors ai-comfyui:/app/models/checkpoints/
 # View all logs
 docker compose logs -f
 
-# View logs for one service
+# View one service
 docker compose logs -f open-webui
 
 # Restart a service
 docker compose restart litellm
 
-# Stop everything
+# Stop everything (keep data)
 docker compose down
 
-# Stop and delete all data
+# Stop and wipe all data
 docker compose down -v
 
 # Update to latest versions
@@ -156,13 +217,14 @@ bash scripts/update.sh
 Browser
   │
   ▼
-Nginx :80
+Nginx :80/:443
   ├── /              → Open WebUI :8080
-  ├── /litellm/      → LiteLLM    :4000  ──► OpenAI / Anthropic / Groq / ...
-  └── /comfyui/      → ComfyUI    :8188       Ollama (local)
+  ├── /litellm/      → LiteLLM    :4000  ──► OpenAI / Anthropic / Groq / Mistral / ...
+  └── /comfyui/      → ComfyUI    :8188       └── Ollama (local, --profile ollama)
+                                               └── vLLM  (local, --profile vllm)
 
-Open WebUI ──► LiteLLM  (all LLM chat/completion calls)
-Open WebUI ──► ComfyUI  (image generation)
+Open WebUI ──► LiteLLM   (LLM chat / completions)
+Open WebUI ──► ComfyUI   (image generation)
 LiteLLM    ──► PostgreSQL (usage logs, model config)
 ```
 
@@ -171,8 +233,10 @@ LiteLLM    ──► PostgreSQL (usage logs, model config)
 ## Requirements
 
 - Docker 24+ with Docker Compose plugin
-- 8 GB RAM minimum (16 GB recommended with local models)
-- For GPU: NVIDIA GPU + `nvidia-container-toolkit`
+- 8 GB RAM minimum; 16 GB+ for local models
+- **NVIDIA GPU**: `nvidia-container-toolkit` + driver 550+
+- **GH200**: ARM64 host, driver 550+, `nvidia-container-toolkit`
+- **HTTPS**: domain pointing at server, ports 80 + 443 open
 
 ---
 
@@ -182,5 +246,7 @@ Each component retains its own license:
 - [Open WebUI](https://github.com/open-webui/open-webui) — MIT
 - [LiteLLM](https://github.com/BerriAI/litellm) — MIT
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — GPL-3.0
+- [vLLM](https://github.com/vllm-project/vllm) — Apache 2.0
+- [Ollama](https://github.com/ollama/ollama) — MIT
 
 Integration code in this repository is MIT licensed.
