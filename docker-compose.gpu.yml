@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU Override — NVIDIA GPU support
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# Prerequisites:
+#   - NVIDIA driver installed on host
+#   - nvidia-container-toolkit installed
+#   - Test with: docker run --rm --gpus all nvidia/cuda:12-base nvidia-smi
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  comfyui:
+    build:
+      context: ./comfyui
+      dockerfile: Dockerfile.gpu
+    image: ai-stack/comfyui:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - COMFYUI_ARGS=--listen 0.0.0.0 --port 8188 --gpu-only
+
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

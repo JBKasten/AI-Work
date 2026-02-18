@@ -1,0 +1,175 @@
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Nginx — unified reverse proxy, single entry point on port 80/443
+  # ─────────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: ai-nginx
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - open-webui
+      - litellm
+      - comfyui
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Open WebUI — primary chat / model management frontend
+  # ─────────────────────────────────────────────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${OPEN_WEBUI_TAG:-main}
+    container_name: ai-open-webui
+    restart: unless-stopped
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      # Point Open WebUI at LiteLLM as its OpenAI-compatible backend
+      - OPENAI_API_BASE_URL=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-ai-stack}
+      # Enable ComfyUI image generation
+      - COMFYUI_BASE_URL=http://comfyui:8188
+      # Disable Ollama built-in if you're routing all models through LiteLLM
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      # Auth & security
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-change-me-in-production}
+      - WEBUI_AUTH=${WEBUI_AUTH:-true}
+      # Optional: default admin user on first boot
+      - WEBUI_DEFAULT_USER_ROLE=${WEBUI_DEFAULT_USER_ROLE:-user}
+      - DEFAULT_USER_EMAIL=${DEFAULT_ADMIN_EMAIL:-admin@local.host}
+      - DEFAULT_USER_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-changeme}
+    depends_on:
+      litellm:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # LiteLLM — unified LLM proxy (OpenAI-compatible endpoint)
+  # ─────────────────────────────────────────────────────────────────
+  litellm:
+    image: ghcr.io/berriai/litellm:${LITELLM_TAG:-main-latest}
+    container_name: ai-litellm
+    restart: unless-stopped
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: --config /app/config.yaml --port 4000 --detailed_debug
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-ai-stack}
+      - DATABASE_URL=postgresql://litellm:${POSTGRES_PASSWORD:-litellm_pass}@postgres:5432/litellm
+      - STORE_MODEL_IN_DB=true
+      # API keys for upstream providers — add whichever you use
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      # Internal Ollama sidecar (optional)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # ComfyUI — node-based Stable Diffusion / image generation backend
+  # ─────────────────────────────────────────────────────────────────
+  comfyui:
+    build:
+      context: ./comfyui
+      dockerfile: Dockerfile
+      args:
+        COMFYUI_TAG: ${COMFYUI_TAG:-latest}
+    image: ai-stack/comfyui:local
+    container_name: ai-comfyui
+    restart: unless-stopped
+    volumes:
+      - comfyui-models:/app/models
+      - comfyui-output:/app/output
+      - comfyui-input:/app/input
+      - comfyui-custom-nodes:/app/custom_nodes
+    environment:
+      - COMFYUI_ARGS=${COMFYUI_ARGS:---listen 0.0.0.0 --port 8188}
+    networks:
+      - ai-network
+    # Uncomment for NVIDIA GPU support (requires nvidia-container-toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ─────────────────────────────────────────────────────────────────
+  # PostgreSQL — LiteLLM usage tracking & model config persistence
+  # ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-postgres
+    restart: unless-stopped
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=litellm
+      - POSTGRES_USER=litellm
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-litellm_pass}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Ollama — optional local model runner (CPU/GPU)
+  # Remove this service if you only use cloud API models
+  # ─────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-latest}
+    container_name: ai-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - ai-network
+    profiles:
+      - ollama       # only starts with: docker compose --profile ollama up
+    # Uncomment for NVIDIA GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+networks:
+  ai-network:
+    driver: bridge
+
+volumes:
+  open-webui-data:
+  comfyui-models:
+  comfyui-output:
+  comfyui-input:
+  comfyui-custom-nodes:
+  postgres-data:
+  ollama-data:

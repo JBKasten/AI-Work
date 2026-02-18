@@ -1,0 +1,141 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# LiteLLM Proxy Configuration
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+#
+# This file is mounted read-only into the LiteLLM container.
+# Add/remove models to match your available API keys.
+# ─────────────────────────────────────────────────────────────────────────────
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true
+
+  # Rate limiting
+  max_budget: null          # Set a $ cap if you want, e.g. 10.00
+  budget_duration: null     # "1d", "7d", "30d"
+
+litellm_settings:
+  # Logging — set to true for verbose request logs
+  set_verbose: false
+  drop_params: true          # Silently drop unsupported params per model
+  success_callback: []       # e.g. ["langfuse", "helicone"]
+  failure_callback: []
+
+router_settings:
+  routing_strategy: usage-based-routing-v2
+  redis_host: null           # Optional: add Redis for distributed routing
+  num_retries: 3
+  timeout: 30
+
+model_list:
+  # ───────── OpenAI ─────────
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4-turbo
+    litellm_params:
+      model: openai/gpt-4-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ───────── Anthropic ─────────
+  - model_name: claude-opus-4
+    litellm_params:
+      model: anthropic/claude-opus-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-4
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-3-5
+    litellm_params:
+      model: anthropic/claude-haiku-3-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ───────── Google Gemini ─────────
+  - model_name: gemini-2.0-flash
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GOOGLE_API_KEY
+
+  - model_name: gemini-1.5-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: os.environ/GOOGLE_API_KEY
+
+  # ───────── Groq (fast inference) ─────────
+  - model_name: llama-3.3-70b
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: llama-3.1-8b-instant
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: mixtral-8x7b
+    litellm_params:
+      model: groq/mixtral-8x7b-32768
+      api_key: os.environ/GROQ_API_KEY
+
+  # ───────── Mistral ─────────
+  - model_name: mistral-large
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  - model_name: mistral-small
+    litellm_params:
+      model: mistral/mistral-small-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
+  # ───────── Together AI (open source models) ─────────
+  - model_name: together-llama-3.1-405b
+    litellm_params:
+      model: together_ai/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo
+      api_key: os.environ/TOGETHER_API_KEY
+
+  # ───────── Cohere ─────────
+  - model_name: command-r-plus
+    litellm_params:
+      model: cohere/command-r-plus
+      api_key: os.environ/COHERE_API_KEY
+
+  # ───────── Local Ollama (via sidecar container) ─────────
+  # These activate automatically when Ollama container is running.
+  # Run: docker compose --profile ollama up
+  # Then pull models: docker exec ai-ollama ollama pull llama3.2
+  - model_name: ollama/llama3.2
+    litellm_params:
+      model: ollama/llama3.2
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama/mistral
+    litellm_params:
+      model: ollama/mistral
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama/codellama
+    litellm_params:
+      model: ollama/codellama
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama/phi3
+    litellm_params:
+      model: ollama/phi3
+      api_base: os.environ/OLLAMA_BASE_URL

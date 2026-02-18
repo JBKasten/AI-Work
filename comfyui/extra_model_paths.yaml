@@ -1,0 +1,15 @@
+# ComfyUI extra model search paths
+# Useful if you want to share models between containers or mount external drives.
+# Paths listed here are checked in addition to the default models/ directory.
+
+# Example: mount a host path to /mnt/models and point ComfyUI at it
+# a_models_folder:
+#   base_path: /mnt/models
+#   checkpoints: checkpoints
+#   vae: vae
+#   loras: loras
+#   upscale_models: upscale_models
+#   embeddings: embeddings
+#   controlnet: controlnet
+#   clip: clip
+#   clip_vision: clip_vision

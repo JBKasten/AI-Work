@@ -1,0 +1,26 @@
+# Environment — never commit real credentials
+.env
+
+# ComfyUI model weights and generated output (large binary files)
+comfyui/models/
+comfyui/output/
+comfyui/input/
+
+# Docker build cache
+.docker/
+
+# Editor / OS
+.DS_Store
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+logs/
