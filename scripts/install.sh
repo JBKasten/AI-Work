@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # AI Stack — one-shot install script
-# Usage: bash scripts/install.sh [--gpu]
+# Usage: bash scripts/install.sh [--gpu] [--gh200]
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 GPU=false
+GH200=false
 
 # Parse args
 for arg in "$@"; do
     case $arg in
-        --gpu) GPU=true ;;
+        --gpu)   GPU=true ;;
+        --gh200) GH200=true; GPU=true ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
@@ -32,8 +34,14 @@ check_deps() {
     if $GPU; then
         command -v nvidia-smi >/dev/null 2>&1 \
             || warn "nvidia-smi not found — GPU support may not work"
-        docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1 \
-            || warn "GPU passthrough test failed — check nvidia-container-toolkit"
+        if $GH200; then
+            docker run --rm --gpus all --platform linux/arm64 \
+                nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1 \
+                || warn "GH200 GPU passthrough test failed — check nvidia-container-toolkit and ARM64 runtime"
+        else
+            docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1 \
+                || warn "GPU passthrough test failed — check nvidia-container-toolkit"
+        fi
     fi
     success "Prerequisites OK"
 }
@@ -68,7 +76,10 @@ start_stack() {
     cd "$ROOT_DIR"
     info "Building images (this will take a few minutes on first run)..."
 
-    if $GPU; then
+    if $GH200; then
+        info "Starting with GH200 Grace Hopper support..."
+        docker compose -f docker-compose.yml -f docker-compose.gh200.yml up -d --build
+    elif $GPU; then
         info "Starting with GPU support..."
         docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
     else
@@ -118,7 +129,14 @@ print_summary() {
     echo "  1. Edit .env and add your API keys"
     echo "  2. Restart: docker compose up -d"
     echo "  3. Open http://localhost:${PORT} and create your admin account"
-    if $GPU; then
+    if $GH200; then
+        echo ""
+        echo "  GH200 tip: start vLLM for high-throughput local inference:"
+        echo "    docker compose -f docker-compose.yml -f docker-compose.gh200.yml --profile vllm up -d --build"
+        echo ""
+        echo "  Download models for ComfyUI:"
+        echo "    bash scripts/download-models.sh sd15"
+    elif $GPU; then
         echo ""
         echo "  GPU tip: download a model into ComfyUI:"
         echo "    docker exec -it ai-comfyui bash"
