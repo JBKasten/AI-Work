@@ -108,7 +108,28 @@ docker compose -f docker-compose.yml -f docker-compose.gh200.yml --profile vllm 
 
 Models available in Open WebUI as `vllm/local`, `vllm/llama-3.2-3b`, etc.
 
-### GH200 Grace Hopper (ARM64)
+### GH200 Bare-Metal (no Docker)
+
+For running directly on the host without Docker:
+
+```bash
+# 1. Install driver + CUDA (if not already done)
+sudo bash scripts/install-cuda-gh200.sh
+sudo reboot   # if driver was just installed
+
+# 2. Install vLLM + Ollama + ComfyUI
+sudo bash scripts/setup-gh200-bare.sh
+
+# 3. Start services
+systemctl start ollama
+ollama pull llama3.2
+vllm serve meta-llama/Llama-3.2-3B-Instruct --host 0.0.0.0 --dtype bfloat16
+systemctl start comfyui
+```
+
+To start over from scratch, just re-run `setup-gh200-bare.sh` — it's idempotent.
+
+### GH200 Grace Hopper (Docker)
 
 The GH200 compose override uses:
 - `nvcr.io/nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04` ARM64 base
@@ -235,7 +256,7 @@ LiteLLM    ──► PostgreSQL (usage logs, model config)
 - Docker 24+ with Docker Compose plugin
 - 8 GB RAM minimum; 16 GB+ for local models
 - **NVIDIA GPU**: `nvidia-container-toolkit` + driver 550+
-- **GH200**: ARM64 host, driver 550+, `nvidia-container-toolkit`
+- **GH200**: ARM64 or x86_64 host, driver 550+, `nvidia-container-toolkit` (Docker) or Python 3.11+ (bare-metal)
 - **HTTPS**: domain pointing at server, ports 80 + 443 open
 
 ---

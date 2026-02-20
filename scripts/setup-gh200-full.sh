@@ -9,8 +9,8 @@ REPO_URL="https://github.com/JBKasten/AI-Work.git"
 BRANCH="claude/install-cuda-gh200-9b72w"
 INSTALL_DIR="/root/ai-stack"
 
-ADMIN_EMAIL="ai@jkasten.com"
-ADMIN_PASSWORD='xE=4]sciY.b!Tf[D'
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@local.host}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16)}"
 
 info()    { echo "[Setup]  $*"; }
 success() { echo "[Setup] ✓ $*"; }

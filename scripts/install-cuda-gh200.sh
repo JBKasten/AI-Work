@@ -29,11 +29,19 @@ fi
 
 # ── Architecture check ───────────────────────────────────────────────────────
 ARCH="$(uname -m)"
-if [[ "$ARCH" != "aarch64" ]]; then
-    die "GH200 is ARM64 (aarch64). Detected architecture: $ARCH"
-fi
-
-info "Architecture: $ARCH — OK"
+case "$ARCH" in
+    aarch64)
+        info "Architecture: $ARCH (Grace Hopper integrated CPU) — OK"
+        CUDA_REPO_ARCH="sbsa"
+        ;;
+    x86_64)
+        info "Architecture: $ARCH (GH200 NVL or PCIe host) — OK"
+        CUDA_REPO_ARCH="x86_64"
+        ;;
+    *)
+        die "Unsupported architecture: $ARCH (expected aarch64 or x86_64)"
+        ;;
+esac
 
 # ── OS detection ─────────────────────────────────────────────────────────────
 if [[ -f /etc/os-release ]]; then
@@ -130,10 +138,12 @@ install_cuda() {
         info "No NVIDIA driver detected — installing..."
     fi
 
-    # Add NVIDIA CUDA repository (sbsa = server-base system architecture for ARM64)
-    info "Adding NVIDIA CUDA 12.4 repository for ARM64 (sbsa)..."
+    # Add NVIDIA CUDA repository
+    # Map OS version to NVIDIA repo name (ubuntu2204 or ubuntu2404)
+    local CUDA_DISTRO="ubuntu${DISTRO_VERSION/./}"
+    info "Adding NVIDIA CUDA 12.4 repository for ${ARCH} (${CUDA_DISTRO}/${CUDA_REPO_ARCH})..."
     local CUDA_KEYRING="cuda-keyring_1.1-1_all.deb"
-    curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/$CUDA_KEYRING" \
+    curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_REPO_ARCH}/$CUDA_KEYRING" \
         -o "/tmp/$CUDA_KEYRING"
     dpkg -i "/tmp/$CUDA_KEYRING"
     rm -f "/tmp/$CUDA_KEYRING"
