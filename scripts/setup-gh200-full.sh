@@ -43,6 +43,29 @@ success "Repo ready at $INSTALL_DIR"
 info "Running GH200 CUDA/Docker installer..."
 bash scripts/install-cuda-gh200.sh
 
+# ── Check if nvidia-smi works (open kernel modules may need a reboot) ──────
+if ! nvidia-smi &>/dev/null; then
+    # Check if open modules are installed but not yet active (needs reboot)
+    if dpkg -l nvidia-kernel-open-550 2>/dev/null | grep -q '^ii'; then
+        echo ""
+        echo "══════════════════════════════════════════════════════════════"
+        echo "  REBOOT REQUIRED"
+        echo ""
+        echo "  The NVIDIA open kernel modules have been installed but"
+        echo "  require a reboot to activate. The GH200 GPU will not"
+        echo "  work until you reboot."
+        echo ""
+        echo "  After reboot, re-run this script:"
+        echo "    cd ${INSTALL_DIR} && bash scripts/setup-gh200-full.sh"
+        echo ""
+        echo "  Or reboot now and re-run automatically:"
+        echo "    sudo reboot"
+        echo "══════════════════════════════════════════════════════════════"
+        echo ""
+        exit 0
+    fi
+fi
+
 # ── Step 3: Create .env with credentials ───────────────────────────────────
 info "Configuring .env..."
 cp -n .env.example .env 2>/dev/null || true

@@ -85,17 +85,46 @@ apt-get install -y --no-install-recommends \
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  1. NVIDIA DRIVER + CUDA TOOLKIT
+#
+#  GH200 is a "self-hosted" GPU (integrated with Grace CPU, not standard PCIe)
+#  and REQUIRES the open kernel modules (nvidia-kernel-open-550).
+#  The proprietary (closed-source) modules will load but refuse to initialize,
+#  resulting in "No devices were found" from nvidia-smi and dmesg errors:
+#    NVRM: installed in this system is self-hosted, and requires
+#    NVRM: use of the NVIDIA open kernel modules.
 # ─────────────────────────────────────────────────────────────────────────────
 install_cuda() {
+    local NEED_INSTALL=true
+    local NEED_OPEN_MODULE_FIX=false
+
+    # Check if driver is installed and working
     if command -v nvidia-smi &>/dev/null; then
         local DRIVER_VER
-        DRIVER_VER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
-        info "NVIDIA driver already installed: $DRIVER_VER"
-        local MAJOR="${DRIVER_VER%%.*}"
-        if [[ "$MAJOR" -ge 550 ]]; then
-            success "Driver $DRIVER_VER >= 550 — OK"
+        DRIVER_VER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)" || true
+
+        if [[ -n "$DRIVER_VER" ]]; then
+            info "NVIDIA driver already installed and working: $DRIVER_VER"
+            local MAJOR="${DRIVER_VER%%.*}"
+            if [[ "$MAJOR" -ge 550 ]]; then
+                success "Driver $DRIVER_VER >= 550 — OK"
+                NEED_INSTALL=false
+            else
+                warn "Driver $DRIVER_VER is below 550. Upgrading..."
+            fi
         else
-            warn "Driver $DRIVER_VER is below 550. Upgrading..."
+            # nvidia-smi exists but can't query GPU — likely closed-source module on GH200
+            warn "nvidia-smi found but GPU not accessible"
+
+            # Check dmesg for the telltale self-hosted message
+            if dmesg 2>/dev/null | grep -q "self-hosted.*NVIDIA open kernel modules"; then
+                warn "GH200 requires OPEN kernel modules — proprietary modules detected"
+                NEED_OPEN_MODULE_FIX=true
+            elif grep -q "self-hosted" /var/log/syslog 2>/dev/null; then
+                warn "GH200 requires OPEN kernel modules — proprietary modules detected"
+                NEED_OPEN_MODULE_FIX=true
+            else
+                warn "Driver may need a reboot or reinstall"
+            fi
         fi
     else
         info "No NVIDIA driver detected — installing..."
@@ -110,10 +139,26 @@ install_cuda() {
     rm -f "/tmp/$CUDA_KEYRING"
     apt_update
 
-    info "Installing CUDA 12.4 toolkit and driver 550..."
-    apt-get install -y --no-install-recommends \
-        cuda-toolkit-12-4 \
-        cuda-drivers-550
+    if $NEED_OPEN_MODULE_FIX; then
+        info "Switching from proprietary to OPEN kernel modules for GH200..."
+        # Remove proprietary kernel modules if present
+        apt-get remove -y --purge nvidia-kernel-source-550 2>/dev/null || true
+        # Install open kernel modules — required for GH200 self-hosted GPU
+        apt-get install -y --no-install-recommends \
+            nvidia-kernel-open-550 \
+            cuda-toolkit-12-4
+        # Rebuild initramfs so the open module loads on next boot
+        update-initramfs -u
+        success "Open kernel modules installed — REBOOT REQUIRED"
+    elif $NEED_INSTALL; then
+        info "Installing CUDA 12.4 toolkit and open driver 550 for GH200..."
+        apt-get install -y --no-install-recommends \
+            cuda-toolkit-12-4 \
+            nvidia-kernel-open-550 \
+            nvidia-driver-550-open
+        # Rebuild initramfs
+        update-initramfs -u
+    fi
 
     # Set up PATH and LD_LIBRARY_PATH
     if ! grep -q '/usr/local/cuda' /etc/profile.d/cuda.sh 2>/dev/null; then
@@ -218,15 +263,29 @@ verify() {
 
     echo ""
     echo "── nvidia-smi ──────────────────────────────────────────────"
-    nvidia-smi || die "nvidia-smi failed — driver may need a reboot to load"
-    echo ""
-
-    echo "── Docker GPU passthrough test ─────────────────────────────"
-    if docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi; then
-        success "Docker GPU passthrough works"
+    if nvidia-smi; then
+        echo ""
+        echo "── Docker GPU passthrough test ─────────────────────────────"
+        if docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi; then
+            success "Docker GPU passthrough works"
+        else
+            warn "Docker GPU passthrough failed. Try rebooting, then run:"
+            warn "  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+        fi
     else
-        warn "Docker GPU passthrough failed. Try rebooting, then run:"
-        warn "  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+        echo ""
+        # Check if we just installed open modules (reboot pending)
+        if dpkg -l nvidia-kernel-open-550 2>/dev/null | grep -q '^ii'; then
+            warn "nvidia-smi failed — this is expected before reboot."
+            warn "Open kernel modules are installed. Reboot to activate them:"
+            warn "  sudo reboot"
+            warn ""
+            warn "After reboot, verify with:"
+            warn "  nvidia-smi"
+            warn "  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+        else
+            die "nvidia-smi failed — driver installation may have failed"
+        fi
     fi
 }
 
