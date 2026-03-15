@@ -1,0 +1,55 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Stack — Autonomous Agents
+#
+# Adds a Pipelines server that hosts the autonomous AI agents.
+# Open WebUI connects to it automatically.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f docker-compose.agents.yml up -d
+#
+# Or with Makefile:
+#   make up DEV=1 AGENTS=1
+#   make up GH200=1 DEV=1 AGENTS=1
+#
+# Agents available in Open WebUI after startup:
+#   - SWE Agent:          Autonomous software engineer
+#   - QA Agent:           Autonomous test engineer
+#   - Code Review Agent:  Autonomous code reviewer
+#   - Agent Orchestrator:  Routes to best agent, or runs full pipeline
+#   - Coding Pipeline:    Solve → Test → Fix loop
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # Pipelines Server — hosts autonomous agent pipelines
+  # ─────────────────────────────────────────────────────────────────
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: ai-pipelines
+    restart: unless-stopped
+    volumes:
+      - ./open-webui/pipelines:/app/pipelines
+    environment:
+      - PIPELINES_DIR=/app/pipelines
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Override Open WebUI to connect to Pipelines server
+  # ─────────────────────────────────────────────────────────────────
+  open-webui:
+    environment:
+      - OPENAI_API_BASE_URL=http://litellm:4000/v1
+      - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-ai-stack}
+      - PIPELINES_URLS=http://pipelines:9099
+    depends_on:
+      pipelines:
+        condition: service_healthy

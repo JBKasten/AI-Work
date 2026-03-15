@@ -27,10 +27,13 @@ source "${SCRIPT_DIR}/lib.sh"
 
 NO_GPU=false
 WITH_AUTH=false
+WITH_AGENTS=false
 for arg in "$@"; do
     case $arg in
-        --no-gpu)   NO_GPU=true ;;
-        --with-auth) WITH_AUTH=true ;;
+        --no-gpu)      NO_GPU=true ;;
+        --with-auth)   WITH_AUTH=true ;;
+        --with-agents) WITH_AGENTS=true ;;
+        --full)        WITH_AUTH=true; WITH_AGENTS=true ;;
     esac
 done
 
@@ -42,7 +45,8 @@ banner \
     "  - Gitea (self-hosted Git + CI)" \
     "  - Jupyter (interactive notebooks)" \
     "  - Code Sandbox (multi-language execution)" \
-    "  - Open WebUI coding tools"
+    "  - Open WebUI coding tools" \
+    "  - Autonomous AI agents (SWE, QA, Review)"
 
 # ── 1. Generate dev secrets in .env ──────────────────────────────────────────
 info "Configuring .env for dev environment..."
@@ -84,6 +88,9 @@ else
 fi
 
 COMPOSE+=" -f docker-compose.dev.yml"
+
+COMPOSE+=" -f docker-compose.agents.yml"
+info "Autonomous agents enabled"
 
 if $WITH_AUTH; then
     COMPOSE+=" -f docker-compose.auth.yml"
@@ -155,27 +162,24 @@ banner \
     "  ComfyUI      →  http://${IP}/comfyui/" \
     "  Sandbox API  →  http://${IP}/sandbox/languages" \
     "" \
-    "Open WebUI Coding Tools:" \
-    "  Import these tools in Open WebUI → Workspace → Tools:" \
-    "    open-webui/tools/code_execute.py   — Execute code (6 languages)" \
-    "    open-webui/tools/run_tests.py      — Run test suites" \
-    "    open-webui/tools/lint_code.py      — Lint & auto-fix" \
-    "    open-webui/tools/analyze_code.py   — Security + complexity analysis" \
-    "    open-webui/tools/code_review.py    — Full automated code review" \
-    "    open-webui/tools/git_operations.py — Git clone + Gitea integration" \
+    "Autonomous AI Agents (select as model in Open WebUI):" \
+    "  SWE Agent        — Writes code, tests, fixes until green" \
+    "  QA Agent         — Finds bugs, writes comprehensive tests" \
+    "  Review Agent     — Deep code review (lint + security + expert)" \
+    "  Orchestrator     — Routes to best agent or runs full pipeline" \
+    "  Coding Pipeline  — Solve → Test → Fix → Finish loop" \
+    "" \
+    "Open WebUI Tools (import in Workspace → Tools):" \
+    "  code_execute, run_tests, lint_code, analyze_code," \
+    "  code_review, git_operations" \
     "" \
     "LiteLLM Coding Models:" \
     "  code         — Best available (Claude → GPT-4o → Gemini)" \
     "  code-fast    — Quick tasks (Haiku → Groq → GPT-4o-mini)" \
     "  code-heavy   — Architecture/debugging (Opus → GPT-4o)" \
     "  code-review  — Specialised review (Sonnet → GPT-4o)" \
-    "  codestral    — Mistral's code model" \
-    "  deepseek-coder — DeepSeek coding specialist" \
     "" \
-    "Sandbox supports: Python, JavaScript, TypeScript, Go, Rust, Bash" \
+    "Sandbox: Python, JavaScript, TypeScript, Go, Rust, Bash" \
     "" \
-    "To restart:" \
-    "  ${COMPOSE} up -d" \
-    "" \
-    "Logs:" \
-    "  ${COMPOSE} logs -f"
+    "To restart: ${COMPOSE} up -d" \
+    "Logs: ${COMPOSE} logs -f"

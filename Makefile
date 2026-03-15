@@ -29,6 +29,9 @@ endif
 ifdef SSL
   COMPOSE += -f docker-compose.ssl.yml
 endif
+ifdef AGENTS
+  COMPOSE += -f docker-compose.agents.yml
+endif
 ifdef VLLM
   COMPOSE += -f docker-compose.vllm.yml
 endif
@@ -50,6 +53,7 @@ help: ## Show this help
 	@echo "  GPU=1    Enable NVIDIA GPU support"
 	@echo "  GH200=1  Enable GH200 Grace Hopper support"
 	@echo "  DEV=1    Enable dev tools (VS Code, Gitea, Jupyter, Sandbox)"
+	@echo "  AGENTS=1 Enable autonomous AI agents (SWE, QA, Review)"
 	@echo "  AUTH=1   Enable Authelia MFA"
 	@echo "  SSL=1    Enable HTTPS/SSL"
 	@echo "  VLLM=1   Enable vLLM sidecar"
@@ -57,10 +61,10 @@ help: ## Show this help
 	@echo "Examples:"
 	@echo "  make up                         # Start (CPU mode)"
 	@echo "  make up GPU=1                   # Start with GPU"
-	@echo "  make up GH200=1 DEV=1           # GH200 + full dev env"
-	@echo "  make up GH200=1 DEV=1 AUTH=1    # GH200 + dev + MFA"
+	@echo "  make up GH200=1 DEV=1 AGENTS=1  # GH200 + dev + agents"
+	@echo "  make up DEV=1 AGENTS=1 AUTH=1   # Dev + agents + MFA"
 	@echo "  make dev                        # Full dev setup (auto-detect GPU)"
-	@echo "  make dev-up                     # Start dev stack"
+	@echo "  make agents                     # Start with agents"
 	@echo "  make sandbox-test               # Test sandbox is working"
 	@echo "  make setup-bare ONLY=cuda,vllm  # Selective bare-metal"
 	@echo "  make mfa-setup                  # Interactive MFA setup"
@@ -98,6 +102,9 @@ ps: status ## Alias for status
 
 dev: ## Full dev setup (VS Code, Gitea, Jupyter, Sandbox + auto-detect GPU)
 	bash scripts/setup-dev.sh
+
+agents: ## Start with autonomous agents (SWE, QA, Review, Orchestrator)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.agents.yml up -d --build
 
 dev-up: ## Start dev stack (shortcut for DEV=1 make up)
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
