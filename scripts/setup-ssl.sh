@@ -10,15 +10,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+LOG_PREFIX="SSL Setup"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+source "${SCRIPT_DIR}/lib.sh"
 
 DOMAIN="${1:-}"
 EMAIL="${2:-}"
-
-info()    { echo "[SSL Setup]  $*"; }
-success() { echo "[SSL Setup] ✓ $*"; }
-die()     { echo "[SSL Setup] ERROR: $*" >&2; exit 1; }
 
 [[ -z "$DOMAIN" ]] && die "Usage: bash scripts/setup-ssl.sh <domain> <email>"
 [[ -z "$EMAIL"  ]] && die "Usage: bash scripts/setup-ssl.sh <domain> <email>"
@@ -45,12 +42,10 @@ success "Certificate issued for ${DOMAIN}"
 # ── Step 3: activate SSL nginx config ────────────────────────────────────────
 info "Activating SSL Nginx config..."
 
-# Substitute domain into the SSL config template
 sed "s/\${DOMAIN}/${DOMAIN}/g" \
     nginx/conf.d/ai-stack-ssl.conf > nginx/conf.d/ai-stack-ssl.conf.tmp \
     && mv nginx/conf.d/ai-stack-ssl.conf.tmp nginx/conf.d/ai-stack-ssl.conf
 
-# Disable the plain HTTP config so it doesn't conflict
 mv nginx/conf.d/ai-stack.conf nginx/conf.d/ai-stack.conf.disabled 2>/dev/null || true
 
 # ── Step 4: save domain to .env ──────────────────────────────────────────────

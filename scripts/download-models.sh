@@ -17,16 +17,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+LOG_PREFIX="Models"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+source "${SCRIPT_DIR}/lib.sh"
+
 PACK="${1:-sd15}"
 HF_TOKEN="${HF_TOKEN:-}"
-
 COMFYUI_CONTAINER="ai-comfyui"
-
-info()    { echo "[Models] $*"; }
-success() { echo "[Models] ✓ $*"; }
-die()     { echo "[Models] ERROR: $*" >&2; exit 1; }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 container_running() {
@@ -74,102 +71,41 @@ civitai_download() {
 # ── Model packs ───────────────────────────────────────────────────────────────
 pack_sd15() {
     info "=== Stable Diffusion 1.5 pack ==="
-    hf_download \
-        "runwayml/stable-diffusion-v1-5" \
-        "v1-5-pruned-emaonly.safetensors" \
-        "models/checkpoints"
-
-    # VAE
-    hf_download \
-        "stabilityai/sd-vae-ft-mse-original" \
-        "vae-ft-mse-840000-ema-pruned.safetensors" \
-        "models/vae"
-
-    # Embeddings (negative)
-    hf_download \
-        "embed/EasyNegative" \
-        "EasyNegative.safetensors" \
-        "models/embeddings" 2>/dev/null || \
-    info "EasyNegative embedding skipped (CivitAI — download manually if needed)"
+    hf_download "runwayml/stable-diffusion-v1-5" "v1-5-pruned-emaonly.safetensors" "models/checkpoints"
+    hf_download "stabilityai/sd-vae-ft-mse-original" "vae-ft-mse-840000-ema-pruned.safetensors" "models/vae"
+    hf_download "embed/EasyNegative" "EasyNegative.safetensors" "models/embeddings" 2>/dev/null || \
+        info "EasyNegative embedding skipped (CivitAI — download manually if needed)"
 }
 
 pack_sdxl() {
     info "=== SDXL 1.0 pack ==="
-    hf_download \
-        "stabilityai/stable-diffusion-xl-base-1.0" \
-        "sd_xl_base_1.0.safetensors" \
-        "models/checkpoints"
-
-    hf_download \
-        "stabilityai/stable-diffusion-xl-refiner-1.0" \
-        "sd_xl_refiner_1.0.safetensors" \
-        "models/checkpoints"
-
-    hf_download \
-        "madebyollin/sdxl-vae-fp16-fix" \
-        "sdxl_vae.safetensors" \
-        "models/vae"
+    hf_download "stabilityai/stable-diffusion-xl-base-1.0" "sd_xl_base_1.0.safetensors" "models/checkpoints"
+    hf_download "stabilityai/stable-diffusion-xl-refiner-1.0" "sd_xl_refiner_1.0.safetensors" "models/checkpoints"
+    hf_download "madebyollin/sdxl-vae-fp16-fix" "sdxl_vae.safetensors" "models/vae"
 }
 
 pack_flux_dev() {
     [[ -z "$HF_TOKEN" ]] && die "FLUX.1-dev requires a HuggingFace token with accepted license.\nSet HF_TOKEN=hf_xxx and re-run."
     info "=== FLUX.1-dev pack (requires HF token) ==="
-    hf_download \
-        "black-forest-labs/FLUX.1-dev" \
-        "flux1-dev.safetensors" \
-        "models/checkpoints"
-
-    # FLUX text encoders
-    hf_download \
-        "comfyanonymous/flux_text_encoders" \
-        "clip_l.safetensors" \
-        "models/clip"
-    hf_download \
-        "comfyanonymous/flux_text_encoders" \
-        "t5xxl_fp16.safetensors" \
-        "models/clip"
-
-    # FLUX VAE
-    hf_download \
-        "black-forest-labs/FLUX.1-dev" \
-        "ae.safetensors" \
-        "models/vae"
+    hf_download "black-forest-labs/FLUX.1-dev" "flux1-dev.safetensors" "models/checkpoints"
+    hf_download "comfyanonymous/flux_text_encoders" "clip_l.safetensors" "models/clip"
+    hf_download "comfyanonymous/flux_text_encoders" "t5xxl_fp16.safetensors" "models/clip"
+    hf_download "black-forest-labs/FLUX.1-dev" "ae.safetensors" "models/vae"
 }
 
 pack_flux_schnell() {
     info "=== FLUX.1-schnell pack ==="
-    hf_download \
-        "black-forest-labs/FLUX.1-schnell" \
-        "flux1-schnell.safetensors" \
-        "models/checkpoints"
-
-    hf_download \
-        "comfyanonymous/flux_text_encoders" \
-        "clip_l.safetensors" \
-        "models/clip"
-    hf_download \
-        "comfyanonymous/flux_text_encoders" \
-        "t5xxl_fp16.safetensors" \
-        "models/clip"
-
-    hf_download \
-        "black-forest-labs/FLUX.1-schnell" \
-        "ae.safetensors" \
-        "models/vae"
+    hf_download "black-forest-labs/FLUX.1-schnell" "flux1-schnell.safetensors" "models/checkpoints"
+    hf_download "comfyanonymous/flux_text_encoders" "clip_l.safetensors" "models/clip"
+    hf_download "comfyanonymous/flux_text_encoders" "t5xxl_fp16.safetensors" "models/clip"
+    hf_download "black-forest-labs/FLUX.1-schnell" "ae.safetensors" "models/vae"
 }
 
 pack_upscalers() {
     info "=== Upscale models pack ==="
-    hf_download \
-        "ai-forever/Real-ESRGAN" \
-        "RealESRGAN_x4.pth" \
-        "models/upscale_models"
-
-    hf_download \
-        "Phips/4xNomos8kSCHAT-L_span_pretrain" \
-        "4xNomos8kSCHAT-L_span_pretrain.pth" \
-        "models/upscale_models" 2>/dev/null || \
-    info "Nomos upscaler skipped"
+    hf_download "ai-forever/Real-ESRGAN" "RealESRGAN_x4.pth" "models/upscale_models"
+    hf_download "Phips/4xNomos8kSCHAT-L_span_pretrain" "4xNomos8kSCHAT-L_span_pretrain.pth" "models/upscale_models" 2>/dev/null || \
+        info "Nomos upscaler skipped"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

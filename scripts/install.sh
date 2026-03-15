@@ -5,11 +5,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+LOG_PREFIX="AI-Stack"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-GPU=false
+source "${SCRIPT_DIR}/lib.sh"
 
-# Parse args
+GPU=false
 for arg in "$@"; do
     case $arg in
         --gpu) GPU=true ;;
@@ -17,22 +17,17 @@ for arg in "$@"; do
     esac
 done
 
-info()    { echo "[AI-Stack]  $*"; }
-success() { echo "[AI-Stack] ✓ $*"; }
-warn()    { echo "[AI-Stack] ! $*" >&2; }
-die()     { echo "[AI-Stack] ERROR: $*" >&2; exit 1; }
-
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 check_deps() {
     info "Checking prerequisites..."
-    command -v docker  >/dev/null 2>&1 || die "Docker is not installed. See https://docs.docker.com/get-docker/"
-    command -v docker  >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+    has_cmd docker || die "Docker is not installed. See https://docs.docker.com/get-docker/"
+    docker compose version >/dev/null 2>&1 \
         || die "Docker Compose plugin not found. See https://docs.docker.com/compose/install/"
 
     if $GPU; then
-        command -v nvidia-smi >/dev/null 2>&1 \
+        has_cmd nvidia-smi \
             || warn "nvidia-smi not found — GPU support may not work"
-        docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >/dev/null 2>&1 \
+        docker run --rm --gpus all "${CUDA_TEST_IMAGE}" nvidia-smi >/dev/null 2>&1 \
             || warn "GPU passthrough test failed — check nvidia-container-toolkit"
     fi
     success "Prerequisites OK"
@@ -48,8 +43,7 @@ setup_env() {
     cp .env.example .env
     info ".env created from .env.example"
 
-    # Generate random secrets
-    if command -v openssl >/dev/null 2>&1; then
+    if has_cmd openssl; then
         LITELLM_KEY="sk-$(openssl rand -hex 16)"
         WEBUI_KEY="$(openssl rand -hex 32)"
         PG_PASS="$(openssl rand -hex 16)"
@@ -101,30 +95,23 @@ wait_healthy() {
 print_summary() {
     PORT=$(grep "^HOST_PORT=" "$ROOT_DIR/.env" | cut -d= -f2)
     PORT="${PORT:-80}"
-    echo ""
-    echo "══════════════════════════════════════════════"
-    echo "  AI Stack is running!"
-    echo ""
-    echo "  Open WebUI  →  http://localhost:${PORT}"
-    echo "  LiteLLM API →  http://localhost:${PORT}/litellm/v1"
-    echo "  ComfyUI     →  http://localhost:${PORT}/comfyui"
-    echo ""
-    echo "  Logs:   docker compose logs -f"
-    echo "  Stop:   docker compose down"
-    echo "  Update: bash scripts/update.sh"
-    echo "══════════════════════════════════════════════"
-    echo ""
-    echo "  Next steps:"
-    echo "  1. Edit .env and add your API keys"
-    echo "  2. Restart: docker compose up -d"
-    echo "  3. Open http://localhost:${PORT} and create your admin account"
-    if $GPU; then
-        echo ""
-        echo "  GPU tip: download a model into ComfyUI:"
-        echo "    docker exec -it ai-comfyui bash"
-        echo "    wget -P models/checkpoints <civitai/huggingface-model-url>"
-    fi
-    echo ""
+
+    banner \
+        "AI Stack is running!" \
+        "" \
+        "Open WebUI  →  http://localhost:${PORT}" \
+        "LiteLLM API →  http://localhost:${PORT}/litellm/v1" \
+        "ComfyUI     →  http://localhost:${PORT}/comfyui" \
+        "" \
+        "Logs:   docker compose logs -f" \
+        "Stop:   docker compose down" \
+        "Update: bash scripts/update.sh" \
+        "" \
+        "Next steps:" \
+        "1. Edit .env and add your API keys" \
+        "2. Restart: docker compose up -d" \
+        "3. Open http://localhost:${PORT} and create your admin account" \
+        "4. Enable MFA: bash scripts/setup-mfa.sh"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

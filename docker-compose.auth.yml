@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Authelia MFA Override — adds hardware key (YubiKey) + TOTP authentication
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d
+#
+# With GPU:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#     -f docker-compose.auth.yml up -d
+#
+# With GH200:
+#   docker compose -f docker-compose.yml -f docker-compose.gh200.yml \
+#     -f docker-compose.auth.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ─────────────────────────────────────────────────────────────────
+  # Authelia — MFA gateway (WebAuthn/FIDO2 + TOTP)
+  # ─────────────────────────────────────────────────────────────────
+  authelia:
+    image: ${AUTHELIA_IMAGE:-authelia/authelia:4}
+    container_name: ai-authelia
+    restart: unless-stopped
+    volumes:
+      - ./authelia:/config
+      - authelia-data:/config/db
+    environment:
+      - AUTHELIA_JWT_SECRET=${AUTHELIA_JWT_SECRET:-}
+      - AUTHELIA_SESSION_SECRET=${AUTHELIA_SESSION_SECRET:-}
+      - AUTHELIA_STORAGE_ENCRYPTION_KEY=${AUTHELIA_ENCRYPTION_KEY:-}
+    healthcheck:
+      test: ["CMD", "authelia", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Override nginx to use auth-enabled config
+  # ─────────────────────────────────────────────────────────────────
+  nginx:
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/ai-stack-auth.conf:/etc/nginx/conf.d/ai-stack.conf:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+    depends_on:
+      authelia:
+        condition: service_healthy
+
+volumes:
+  authelia-data:

@@ -8,50 +8,17 @@
 # Usage:
 #   curl -fsSL <raw-url>/scripts/install-cuda-gh200.sh | bash
 #   # or
-#   bash scripts/install-cuda-gh200.sh
-#
-# After this script finishes, run:
-#   bash scripts/install.sh --gpu
-#   # then bring up GH200 overrides:
-#   docker compose -f docker-compose.yml -f docker-compose.gh200.yml up -d --build
+#   sudo bash scripts/install-cuda-gh200.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-info()    { echo "[GH200-Setup]  $*"; }
-success() { echo "[GH200-Setup] ✓ $*"; }
-warn()    { echo "[GH200-Setup] ! $*" >&2; }
-die()     { echo "[GH200-Setup] ERROR: $*" >&2; exit 1; }
+LOG_PREFIX="GH200-Setup"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib.sh"
 
-# ── Root check ───────────────────────────────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
-    die "This script must be run as root (sudo bash $0)"
-fi
-
-# ── Architecture check ───────────────────────────────────────────────────────
-ARCH="$(uname -m)"
-case "$ARCH" in
-    aarch64)
-        info "Architecture: $ARCH (Grace Hopper integrated CPU) — OK"
-        CUDA_REPO_ARCH="sbsa"
-        ;;
-    x86_64)
-        info "Architecture: $ARCH (GH200 NVL or PCIe host) — OK"
-        CUDA_REPO_ARCH="x86_64"
-        ;;
-    *)
-        die "Unsupported architecture: $ARCH (expected aarch64 or x86_64)"
-        ;;
-esac
-
-# ── OS detection ─────────────────────────────────────────────────────────────
-if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    DISTRO="$ID"
-    DISTRO_VERSION="$VERSION_ID"
-    DISTRO_CODENAME="${VERSION_CODENAME:-}"
-else
-    die "Cannot detect OS — /etc/os-release not found"
-fi
+require_root
+detect_arch
+detect_os
 
 info "OS: $DISTRO $DISTRO_VERSION ($DISTRO_CODENAME)"
 
@@ -62,68 +29,39 @@ case "$DISTRO" in
         fi
         ;;
     *)
-        warn "This script is written for Ubuntu. Detected $DISTRO — proceeding but your mileage may vary."
+        warn "This script is written for Ubuntu. Detected $DISTRO — proceeding but YMMV."
         ;;
 esac
 
-# ── Helper: apt retry ────────────────────────────────────────────────────────
-apt_update() {
-    local attempt
-    for attempt in 1 2 3; do
-        if apt-get update -y; then
-            return 0
-        fi
-        warn "apt-get update failed (attempt $attempt/3), retrying..."
-        sleep 3
-    done
-    die "apt-get update failed after 3 attempts"
-}
-
 # ── Install base packages ───────────────────────────────────────────────────
 info "Installing base packages..."
-apt_update
+apt_retry update -y
 apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    software-properties-common \
-    dirmngr \
-    apt-transport-https
+    ca-certificates curl gnupg lsb-release \
+    software-properties-common dirmngr apt-transport-https
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  1. NVIDIA DRIVER + CUDA TOOLKIT
-#
-#  GH200 is a "self-hosted" GPU (integrated with Grace CPU, not standard PCIe)
-#  and REQUIRES the open kernel modules (nvidia-kernel-open-550).
-#  The proprietary (closed-source) modules will load but refuse to initialize,
-#  resulting in "No devices were found" from nvidia-smi and dmesg errors:
-#    NVRM: installed in this system is self-hosted, and requires
-#    NVRM: use of the NVIDIA open kernel modules.
 # ─────────────────────────────────────────────────────────────────────────────
 install_cuda() {
     local NEED_INSTALL=true
     local NEED_OPEN_MODULE_FIX=false
 
-    # Check if driver is installed and working
-    if command -v nvidia-smi &>/dev/null; then
+    if has_cmd nvidia-smi; then
         local DRIVER_VER
         DRIVER_VER="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)" || true
 
         if [[ -n "$DRIVER_VER" ]]; then
             info "NVIDIA driver already installed and working: $DRIVER_VER"
             local MAJOR="${DRIVER_VER%%.*}"
-            if [[ "$MAJOR" -ge 550 ]]; then
-                success "Driver $DRIVER_VER >= 550 — OK"
+            if [[ "$MAJOR" -ge ${NVIDIA_DRIVER_VERSION} ]]; then
+                success "Driver $DRIVER_VER >= ${NVIDIA_DRIVER_VERSION} — OK"
                 NEED_INSTALL=false
             else
-                warn "Driver $DRIVER_VER is below 550. Upgrading..."
+                warn "Driver $DRIVER_VER is below ${NVIDIA_DRIVER_VERSION}. Upgrading..."
             fi
         else
-            # nvidia-smi exists but can't query GPU — likely closed-source module on GH200
             warn "nvidia-smi found but GPU not accessible"
-
-            # Check dmesg for the telltale self-hosted message
             if dmesg 2>/dev/null | grep -q "self-hosted.*NVIDIA open kernel modules"; then
                 warn "GH200 requires OPEN kernel modules — proprietary modules detected"
                 NEED_OPEN_MODULE_FIX=true
@@ -139,59 +77,54 @@ install_cuda() {
     fi
 
     # Add NVIDIA CUDA repository
-    # Map OS version to NVIDIA repo name (ubuntu2204 or ubuntu2404)
     local CUDA_DISTRO="ubuntu${DISTRO_VERSION/./}"
-    info "Adding NVIDIA CUDA 12.4 repository for ${ARCH} (${CUDA_DISTRO}/${CUDA_REPO_ARCH})..."
-    local CUDA_KEYRING="cuda-keyring_1.1-1_all.deb"
-    curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_REPO_ARCH}/$CUDA_KEYRING" \
-        -o "/tmp/$CUDA_KEYRING"
+    info "Adding NVIDIA CUDA ${CUDA_VERSION} repository for ${ARCH} (${CUDA_DISTRO}/${CUDA_REPO_ARCH})..."
+    local CUDA_KEYRING="cuda-keyring_${CUDA_KEYRING_VERSION}_all.deb"
+    download \
+        "https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/${CUDA_REPO_ARCH}/$CUDA_KEYRING" \
+        "/tmp/$CUDA_KEYRING" \
+        || die "Failed to download CUDA keyring"
     dpkg -i "/tmp/$CUDA_KEYRING"
     rm -f "/tmp/$CUDA_KEYRING"
-    apt_update
+    apt_retry update -y
+
+    local CUDA_PKG="cuda-toolkit-${CUDA_VERSION//./-}"
+    local DRIVER_OPEN="nvidia-kernel-open-${NVIDIA_DRIVER_VERSION}"
+    local DRIVER_PKG="nvidia-driver-${NVIDIA_DRIVER_VERSION}-open"
 
     if $NEED_OPEN_MODULE_FIX; then
         info "Switching from proprietary to OPEN kernel modules for GH200..."
-        # Remove proprietary kernel modules if present
-        apt-get remove -y --purge nvidia-kernel-source-550 2>/dev/null || true
-        # Install open kernel modules — required for GH200 self-hosted GPU
-        apt-get install -y --no-install-recommends \
-            nvidia-kernel-open-550 \
-            cuda-toolkit-12-4
-        # Rebuild initramfs so the open module loads on next boot
+        apt-get remove -y --purge "nvidia-kernel-source-${NVIDIA_DRIVER_VERSION}" 2>/dev/null || true
+        apt-get install -y --no-install-recommends "$DRIVER_OPEN" "$CUDA_PKG"
         update-initramfs -u
         success "Open kernel modules installed — REBOOT REQUIRED"
     elif $NEED_INSTALL; then
-        info "Installing CUDA 12.4 toolkit and open driver 550 for GH200..."
-        apt-get install -y --no-install-recommends \
-            cuda-toolkit-12-4 \
-            nvidia-kernel-open-550 \
-            nvidia-driver-550-open
-        # Rebuild initramfs
+        info "Installing CUDA ${CUDA_VERSION} toolkit and open driver ${NVIDIA_DRIVER_VERSION} for GH200..."
+        apt-get install -y --no-install-recommends "$CUDA_PKG" "$DRIVER_OPEN" "$DRIVER_PKG"
         update-initramfs -u
     fi
 
     # Set up PATH and LD_LIBRARY_PATH
+    local CUDA_HOME="/usr/local/cuda-${CUDA_VERSION}"
     if ! grep -q '/usr/local/cuda' /etc/profile.d/cuda.sh 2>/dev/null; then
-        cat > /etc/profile.d/cuda.sh << 'ENVEOF'
-export PATH=/usr/local/cuda-12.4/bin${PATH:+:$PATH}
-export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+        cat > /etc/profile.d/cuda.sh << ENVEOF
+export PATH=${CUDA_HOME}/bin\${PATH:+:\$PATH}
+export LD_LIBRARY_PATH=${CUDA_HOME}/lib64\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
 ENVEOF
         chmod 644 /etc/profile.d/cuda.sh
     fi
-    export PATH=/usr/local/cuda-12.4/bin${PATH:+:$PATH}
-    export LD_LIBRARY_PATH=/usr/local/cuda-12.4/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+    export PATH="${CUDA_HOME}/bin${PATH:+:$PATH}"
+    export LD_LIBRARY_PATH="${CUDA_HOME}/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    success "CUDA 12.4 installed"
+    success "CUDA ${CUDA_VERSION} installed"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  2. DOCKER CE
 # ─────────────────────────────────────────────────────────────────────────────
 install_docker() {
-    if command -v docker &>/dev/null; then
-        local DOCKER_VER
-        DOCKER_VER="$(docker --version)"
-        success "Docker already installed: $DOCKER_VER"
+    if has_cmd docker; then
+        success "Docker already installed: $(docker --version)"
         if docker compose version &>/dev/null; then
             success "Docker Compose plugin available"
             return 0
@@ -202,35 +135,25 @@ install_docker() {
         info "Docker not found — installing Docker CE..."
     fi
 
-    # Add Docker official GPG key and repo
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
     chmod a+r /etc/apt/keyrings/docker.gpg
 
     echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-        https://download.docker.com/linux/ubuntu \
-        $(lsb_release -cs) stable" \
-        > /etc/apt/sources-list.d/docker.list 2>/dev/null || \
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+        "deb [arch=${DOCKER_ARCH} signed-by=/etc/apt/keyrings/docker.gpg] \
         https://download.docker.com/linux/ubuntu \
         ${DISTRO_CODENAME} stable" \
         > /etc/apt/sources.list.d/docker.list
 
-    apt_update
+    apt_retry update -y
     apt-get install -y --no-install-recommends \
-        docker-ce \
-        docker-ce-cli \
-        containerd.io \
-        docker-buildx-plugin \
-        docker-compose-plugin
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin
 
     systemctl enable --now docker
     success "Docker CE installed and running"
 
-    # Add current sudo user to docker group if applicable
     if [[ -n "${SUDO_USER:-}" ]]; then
         usermod -aG docker "$SUDO_USER"
         info "Added $SUDO_USER to docker group (re-login to take effect)"
@@ -247,7 +170,6 @@ install_nvidia_container_toolkit() {
         info "Installing nvidia-container-toolkit..."
     fi
 
-    # Add NVIDIA container toolkit repo
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
         | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg --yes
 
@@ -255,10 +177,9 @@ install_nvidia_container_toolkit() {
         | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
         > /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-    apt_update
+    apt_retry update -y
     apt-get install -y --no-install-recommends nvidia-container-toolkit
 
-    # Configure Docker runtime
     nvidia-ctk runtime configure --runtime=docker
     systemctl restart docker
 
@@ -276,23 +197,17 @@ verify() {
     if nvidia-smi; then
         echo ""
         echo "── Docker GPU passthrough test ─────────────────────────────"
-        if docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi; then
+        if docker run --rm --gpus all "${CUDA_TEST_IMAGE}" nvidia-smi; then
             success "Docker GPU passthrough works"
         else
             warn "Docker GPU passthrough failed. Try rebooting, then run:"
-            warn "  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+            warn "  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi"
         fi
     else
-        echo ""
-        # Check if we just installed open modules (reboot pending)
-        if dpkg -l nvidia-kernel-open-550 2>/dev/null | grep -q '^ii'; then
+        if dpkg -l "nvidia-kernel-open-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | grep -q '^ii'; then
             warn "nvidia-smi failed — this is expected before reboot."
             warn "Open kernel modules are installed. Reboot to activate them:"
             warn "  sudo reboot"
-            warn ""
-            warn "After reboot, verify with:"
-            warn "  nvidia-smi"
-            warn "  docker run --rm --gpus all nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
         else
             die "nvidia-smi failed — driver installation may have failed"
         fi
@@ -302,32 +217,26 @@ verify() {
 # ─────────────────────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "══════════════════════════════════════════════════════════════"
-echo "  GH200 Grace Hopper — CUDA + Docker Setup"
-echo "  Target: NVIDIA driver 550+, CUDA 12.4, Docker CE,"
-echo "          nvidia-container-toolkit"
-echo "══════════════════════════════════════════════════════════════"
-echo ""
+banner \
+    "GH200 Grace Hopper — CUDA + Docker Setup" \
+    "Target: NVIDIA driver ${NVIDIA_DRIVER_VERSION}+, CUDA ${CUDA_VERSION}, Docker CE," \
+    "        nvidia-container-toolkit"
 
 install_cuda
 install_docker
 install_nvidia_container_toolkit
 verify
 
-echo ""
-echo "══════════════════════════════════════════════════════════════"
-echo "  GH200 host setup complete!"
-echo ""
-echo "  Next steps:"
-echo "    cd $(pwd)"
-echo "    bash scripts/install.sh --gpu"
-echo ""
-echo "  Then start with GH200 overrides:"
-echo "    docker compose -f docker-compose.yml \\"
-echo "      -f docker-compose.gh200.yml up -d --build"
-echo ""
-echo "  If nvidia-smi failed above, reboot first:"
-echo "    sudo reboot"
-echo "══════════════════════════════════════════════════════════════"
-echo ""
+banner \
+    "GH200 host setup complete!" \
+    "" \
+    "Next steps:" \
+    "  cd $(pwd)" \
+    "  bash scripts/install.sh --gpu" \
+    "" \
+    "Then start with GH200 overrides:" \
+    "  docker compose -f docker-compose.yml \\" \
+    "    -f docker-compose.gh200.yml up -d --build" \
+    "" \
+    "If nvidia-smi failed above, reboot first:" \
+    "  sudo reboot"

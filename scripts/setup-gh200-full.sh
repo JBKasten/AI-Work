@@ -12,17 +12,23 @@ INSTALL_DIR="/root/ai-stack"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@local.host}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16)}"
 
+# Minimal bootstrap logging (lib.sh not available until repo is cloned)
 info()    { echo "[Setup]  $*"; }
 success() { echo "[Setup] ✓ $*"; }
 die()     { echo "[Setup] ERROR: $*" >&2; exit 1; }
 
-echo ""
-echo "══════════════════════════════════════════════════════════════"
-echo "  GH200 Full Stack Setup"
-echo "  Email:  ${ADMIN_EMAIL}"
-echo "  Branch: ${BRANCH}"
-echo "══════════════════════════════════════════════════════════════"
-echo ""
+banner() {
+    echo ""
+    echo "══════════════════════════════════════════════════════════════"
+    for line in "$@"; do echo "  $line"; done
+    echo "══════════════════════════════════════════════════════════════"
+    echo ""
+}
+
+banner \
+    "GH200 Full Stack Setup" \
+    "Email:  ${ADMIN_EMAIL}" \
+    "Branch: ${BRANCH}"
 
 # ── Step 1: Clone the repo ─────────────────────────────────────────────────
 info "Cloning repo..."
@@ -39,29 +45,29 @@ else
 fi
 success "Repo ready at $INSTALL_DIR"
 
+# Now source lib.sh for the rest
+LOG_PREFIX="Setup"
+source scripts/lib.sh
+
 # ── Step 2: Run CUDA + Docker installer ────────────────────────────────────
 info "Running GH200 CUDA/Docker installer..."
 bash scripts/install-cuda-gh200.sh
 
 # ── Check if nvidia-smi works (open kernel modules may need a reboot) ──────
 if ! nvidia-smi &>/dev/null; then
-    # Check if open modules are installed but not yet active (needs reboot)
-    if dpkg -l nvidia-kernel-open-550 2>/dev/null | grep -q '^ii'; then
-        echo ""
-        echo "══════════════════════════════════════════════════════════════"
-        echo "  REBOOT REQUIRED"
-        echo ""
-        echo "  The NVIDIA open kernel modules have been installed but"
-        echo "  require a reboot to activate. The GH200 GPU will not"
-        echo "  work until you reboot."
-        echo ""
-        echo "  After reboot, re-run this script:"
-        echo "    cd ${INSTALL_DIR} && bash scripts/setup-gh200-full.sh"
-        echo ""
-        echo "  Or reboot now and re-run automatically:"
-        echo "    sudo reboot"
-        echo "══════════════════════════════════════════════════════════════"
-        echo ""
+    if dpkg -l "nvidia-kernel-open-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | grep -q '^ii'; then
+        banner \
+            "REBOOT REQUIRED" \
+            "" \
+            "The NVIDIA open kernel modules have been installed but" \
+            "require a reboot to activate. The GH200 GPU will not" \
+            "work until you reboot." \
+            "" \
+            "After reboot, re-run this script:" \
+            "  cd ${INSTALL_DIR} && bash scripts/setup-gh200-full.sh" \
+            "" \
+            "Or reboot now:" \
+            "  sudo reboot"
         exit 0
     fi
 fi
@@ -70,7 +76,6 @@ fi
 info "Configuring .env..."
 cp -n .env.example .env 2>/dev/null || true
 
-# Generate secrets
 LITELLM_KEY="sk-$(openssl rand -hex 16)"
 WEBUI_KEY="$(openssl rand -hex 32)"
 PG_PASS="$(openssl rand -hex 16)"
@@ -97,34 +102,35 @@ for i in $(seq 1 $MAX); do
         break
     fi
     if [[ $i -eq $MAX ]]; then
-        echo "[Setup] ! Timed out. Check: docker compose logs"
+        warn "Timed out. Check: docker compose logs"
     fi
     sleep 5
 done
 
 # ── Step 6: Download models ───────────────────────────────────────────────
 info "Downloading starter models (SD 1.5 + upscalers)..."
-bash scripts/download-models.sh sd15 || echo "[Setup] ! Model download had issues — you can re-run later"
-bash scripts/download-models.sh upscalers || echo "[Setup] ! Upscaler download had issues — you can re-run later"
+bash scripts/download-models.sh sd15 || warn "Model download had issues — you can re-run later"
+bash scripts/download-models.sh upscalers || warn "Upscaler download had issues — you can re-run later"
 
 # ── Done ──────────────────────────────────────────────────────────────────
-IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-echo ""
-echo "══════════════════════════════════════════════════════════════"
-echo "  GH200 Stack is LIVE!"
-echo ""
-echo "  Open WebUI  →  http://${IP}"
-echo "  ComfyUI     →  http://${IP}/comfyui"
-echo "  LiteLLM API →  http://${IP}/litellm/v1"
-echo ""
-echo "  Login:"
-echo "    Email:    ${ADMIN_EMAIL}"
-echo "    Password: (same as server password)"
-echo ""
-echo "  To download FLUX models later:"
-echo "    bash scripts/download-models.sh flux-schnell"
-echo ""
-echo "  Logs:  docker compose logs -f"
-echo "  Stop:  docker compose down"
-echo "══════════════════════════════════════════════════════════════"
-echo ""
+IP="$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')"
+
+banner \
+    "GH200 Stack is LIVE!" \
+    "" \
+    "Open WebUI  →  http://${IP}" \
+    "ComfyUI     →  http://${IP}/comfyui" \
+    "LiteLLM API →  http://${IP}/litellm/v1" \
+    "" \
+    "Login:" \
+    "  Email:    ${ADMIN_EMAIL}" \
+    "  Password: (same as server password)" \
+    "" \
+    "Enable MFA (YubiKey + TOTP):" \
+    "  bash scripts/setup-mfa.sh" \
+    "" \
+    "To download FLUX models later:" \
+    "  bash scripts/download-models.sh flux-schnell" \
+    "" \
+    "Logs:  docker compose logs -f" \
+    "Stop:  docker compose down"
