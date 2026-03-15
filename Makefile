@@ -20,6 +20,9 @@ endif
 ifdef GH200
   COMPOSE += -f docker-compose.gh200.yml
 endif
+ifdef DEV
+  COMPOSE += -f docker-compose.dev.yml
+endif
 ifdef AUTH
   COMPOSE += -f docker-compose.auth.yml
 endif
@@ -46,6 +49,7 @@ help: ## Show this help
 	@echo "Modifiers (prepend to any target):"
 	@echo "  GPU=1    Enable NVIDIA GPU support"
 	@echo "  GH200=1  Enable GH200 Grace Hopper support"
+	@echo "  DEV=1    Enable dev tools (VS Code, Gitea, Jupyter, Sandbox)"
 	@echo "  AUTH=1   Enable Authelia MFA"
 	@echo "  SSL=1    Enable HTTPS/SSL"
 	@echo "  VLLM=1   Enable vLLM sidecar"
@@ -53,8 +57,11 @@ help: ## Show this help
 	@echo "Examples:"
 	@echo "  make up                         # Start (CPU mode)"
 	@echo "  make up GPU=1                   # Start with GPU"
-	@echo "  make up GH200=1 AUTH=1          # Start GH200 + MFA"
-	@echo "  make setup-bare                 # Bare-metal GH200 setup"
+	@echo "  make up GH200=1 DEV=1           # GH200 + full dev env"
+	@echo "  make up GH200=1 DEV=1 AUTH=1    # GH200 + dev + MFA"
+	@echo "  make dev                        # Full dev setup (auto-detect GPU)"
+	@echo "  make dev-up                     # Start dev stack"
+	@echo "  make sandbox-test               # Test sandbox is working"
 	@echo "  make setup-bare ONLY=cuda,vllm  # Selective bare-metal"
 	@echo "  make mfa-setup                  # Interactive MFA setup"
 	@echo "  make download PACK=flux-schnell # Download models"
@@ -83,6 +90,48 @@ status: ## Show running containers and health
 	$(COMPOSE) ps
 
 ps: status ## Alias for status
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Development & Coding
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: dev dev-up dev-down dev-logs sandbox-test sandbox-shell
+
+dev: ## Full dev setup (VS Code, Gitea, Jupyter, Sandbox + auto-detect GPU)
+	bash scripts/setup-dev.sh
+
+dev-up: ## Start dev stack (shortcut for DEV=1 make up)
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+dev-down: ## Stop dev stack
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+
+dev-logs: ## Follow dev service logs
+ifdef SVC
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f $(SVC)
+else
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+endif
+
+sandbox-test: ## Verify sandbox is working (runs hello world in 5 languages)
+	@echo "Testing Python..."
+	@curl -sf http://localhost/sandbox/execute -H 'Content-Type: application/json' \
+		-d '{"code":"print(\"Hello from Python!\")","language":"python"}' | jq -r '.stdout' || echo "FAILED"
+	@echo "Testing JavaScript..."
+	@curl -sf http://localhost/sandbox/execute -H 'Content-Type: application/json' \
+		-d '{"code":"console.log(\"Hello from JavaScript!\")","language":"javascript"}' | jq -r '.stdout' || echo "FAILED"
+	@echo "Testing Go..."
+	@curl -sf http://localhost/sandbox/execute -H 'Content-Type: application/json' \
+		-d '{"code":"package main\nimport \"fmt\"\nfunc main(){fmt.Println(\"Hello from Go!\")}","language":"go"}' | jq -r '.stdout' || echo "FAILED"
+	@echo "Testing Bash..."
+	@curl -sf http://localhost/sandbox/execute -H 'Content-Type: application/json' \
+		-d '{"code":"echo Hello from Bash!","language":"bash"}' | jq -r '.stdout' || echo "FAILED"
+	@echo "Testing Rust..."
+	@curl -sf http://localhost/sandbox/execute -H 'Content-Type: application/json' \
+		-d '{"code":"fn main(){println!(\"Hello from Rust!\");}","language":"rust"}' | jq -r '.stdout' || echo "FAILED"
+	@echo "All sandbox tests complete!"
+
+sandbox-shell: ## Open a shell in the sandbox container
+	docker exec -it ai-sandbox bash
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  GH200 / Bare-Metal
@@ -149,6 +198,20 @@ download-flux: ## Download FLUX.1-schnell
 
 download-upscalers: ## Download upscale models
 	bash scripts/download-models.sh upscalers
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Ollama model management
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: ollama-pull ollama-code
+
+ollama-pull: ## Pull an Ollama model: make ollama-pull MODEL=llama3.2
+	docker exec ai-ollama ollama pull $(MODEL)
+
+ollama-code: ## Pull coding-focused Ollama models
+	docker exec ai-ollama ollama pull codellama
+	docker exec ai-ollama ollama pull deepseek-coder-v2
+	docker exec ai-ollama ollama pull qwen2.5-coder
+	docker exec ai-ollama ollama pull starcoder2
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Update / Maintenance

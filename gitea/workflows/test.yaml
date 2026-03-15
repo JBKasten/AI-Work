@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Gitea CI — Example test workflow
+#
+# Copy this file to your repo's .gitea/workflows/test.yaml
+# It runs on every push and pull request.
+#
+# Uses the AI Stack sandbox image for multi-language support.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Test
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov ruff
+          pip install -r requirements.txt 2>/dev/null || true
+
+      - name: Lint
+        run: ruff check . || true
+
+      - name: Test
+        run: pytest -v --tb=short --cov=. --cov-report=term-missing
+
+  test-node:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci 2>/dev/null || npm install 2>/dev/null || true
+
+      - name: Lint
+        run: npx eslint . 2>/dev/null || true
+
+      - name: Test
+        run: npm test 2>/dev/null || npx jest --verbose 2>/dev/null || echo "No tests found"

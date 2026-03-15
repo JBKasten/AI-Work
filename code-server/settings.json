@@ -1,0 +1,46 @@
+{
+    "editor.fontSize": 14,
+    "editor.tabSize": 4,
+    "editor.wordWrap": "on",
+    "editor.minimap.enabled": false,
+    "editor.bracketPairColorization.enabled": true,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.rulers": [88, 120],
+    "editor.suggestSelection": "first",
+    "editor.inlineSuggest.enabled": true,
+
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.fontSize": 13,
+
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+
+    "python.defaultInterpreterPath": "/usr/bin/python3",
+    "python.analysis.autoImportCompletions": true,
+
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.tabSize": 4
+    },
+    "[javascript]": {
+        "editor.tabSize": 2
+    },
+    "[typescript]": {
+        "editor.tabSize": 2
+    },
+    "[json]": {
+        "editor.tabSize": 2
+    },
+    "[yaml]": {
+        "editor.tabSize": 2
+    },
+
+    "git.enableSmartCommit": true,
+    "git.autofetch": true,
+
+    "workbench.colorTheme": "Default Dark Modern",
+    "workbench.startupEditor": "none"
+}

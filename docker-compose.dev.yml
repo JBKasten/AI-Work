@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Stack — Development & Coding Environment
+#
+# Adds: code-server (VS Code), Gitea (Git), Jupyter, code sandbox
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# With GPU + MFA:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml \
+#     -f docker-compose.dev.yml -f docker-compose.auth.yml up -d
+#
+# Access:
+#   VS Code   → http://localhost/code/
+#   Gitea     → http://localhost/git/
+#   Jupyter   → http://localhost/jupyter/
+#   Sandbox   → http://localhost/sandbox/ (API)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # code-server — VS Code in the browser
+  # ─────────────────────────────────────────────────────────────────
+  code-server:
+    image: codercom/code-server:latest
+    container_name: ai-code-server
+    restart: unless-stopped
+    environment:
+      - PASSWORD=${CODE_SERVER_PASSWORD:-changeme}
+      - HASHED_PASSWORD=${CODE_SERVER_HASHED_PASSWORD:-}
+      - PROXY_DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - code-server-data:/home/coder/.local/share/code-server
+      - code-projects:/home/coder/projects
+      - ./code-server/settings.json:/home/coder/.local/share/code-server/User/settings.json:ro
+    user: "1000:1000"
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Gitea — self-hosted Git with code review, issues, CI
+  # ─────────────────────────────────────────────────────────────────
+  gitea:
+    image: gitea/gitea:latest
+    container_name: ai-gitea
+    restart: unless-stopped
+    environment:
+      - GITEA__server__ROOT_URL=http://${DOMAIN:-localhost}/git/
+      - GITEA__server__DOMAIN=${DOMAIN:-localhost}
+      - GITEA__database__DB_TYPE=sqlite3
+      - GITEA__service__DISABLE_REGISTRATION=${GITEA_DISABLE_REGISTRATION:-false}
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=${GITEA_REQUIRE_SIGNIN:-false}
+      - GITEA__webhook__ALLOWED_HOST_LIST=*
+      - GITEA__actions__ENABLED=true
+    volumes:
+      - gitea-data:/data
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Gitea Actions Runner — CI/CD for automated testing
+  # ─────────────────────────────────────────────────────────────────
+  gitea-runner:
+    image: gitea/act_runner:latest
+    container_name: ai-gitea-runner
+    restart: unless-stopped
+    environment:
+      - GITEA_INSTANCE_URL=http://gitea:3000
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_TOKEN:-}
+      - GITEA_RUNNER_NAME=ai-stack-runner
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitea-runner-data:/data
+    depends_on:
+      - gitea
+    networks:
+      - ai-network
+    profiles:
+      - gitea-ci
+
+  # ─────────────────────────────────────────────────────────────────
+  # Jupyter — interactive notebooks for experimentation
+  # ─────────────────────────────────────────────────────────────────
+  jupyter:
+    image: quay.io/jupyter/scipy-notebook:latest
+    container_name: ai-jupyter
+    restart: unless-stopped
+    environment:
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-ai-stack}
+      - JUPYTER_ENABLE_LAB=yes
+      - NB_UID=1000
+      - NB_GID=100
+    command: start-notebook.sh --NotebookApp.base_url=/jupyter/ --NotebookApp.token=${JUPYTER_TOKEN:-ai-stack}
+    volumes:
+      - jupyter-data:/home/jovyan/work
+      - code-projects:/home/jovyan/projects
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Code Sandbox — safe execution for LLM-generated code
+  #
+  # Multi-language: Python, JS/TS, Go, Rust, Bash
+  # REST API for code execution, testing, linting, analysis
+  # ─────────────────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: ai-stack/sandbox:local
+    container_name: ai-sandbox
+    restart: unless-stopped
+    # Security: no network to outside, limited resources
+    read_only: false
+    tmpfs:
+      - /tmp:size=512M
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-network
+
+  # ─────────────────────────────────────────────────────────────────
+  # Override nginx to include dev routes
+  # ─────────────────────────────────────────────────────────────────
+  nginx:
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/ai-stack-dev.conf:/etc/nginx/conf.d/ai-stack.conf:ro
+
+volumes:
+  code-server-data:
+  code-projects:
+  gitea-data:
+  gitea-runner-data:
+  jupyter-data:

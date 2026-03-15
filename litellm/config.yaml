@@ -26,9 +26,95 @@ router_settings:
   routing_strategy: usage-based-routing-v2
   redis_host: null           # Optional: add Redis for distributed routing
   num_retries: 3
-  timeout: 30
+  timeout: 60                # Increased for coding tasks (longer outputs)
+  allowed_fails: 2
 
 model_list:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  CODING-OPTIMIZED MODELS
+  #  These aliases route to the best models for code generation, review, and
+  #  debugging. Use "code" as the model name for automatic best-model routing.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # ───────── Best-of-breed coding alias (tries Claude → GPT-4o → Gemini) ───
+  - model_name: code
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      description: "Primary coding model — Claude Sonnet 4.5 (excellent at code)"
+
+  - model_name: code
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      description: "Coding fallback — GPT-4o"
+
+  - model_name: code
+    litellm_params:
+      model: gemini/gemini-2.0-flash
+      api_key: os.environ/GOOGLE_API_KEY
+    model_info:
+      description: "Coding fallback — Gemini 2.0 Flash"
+
+  # ───────── Fast coding (quick completions, autocomplete, small tasks) ─────
+  - model_name: code-fast
+    litellm_params:
+      model: anthropic/claude-haiku-3-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      description: "Fast coding — Haiku 3.5 (quick + cheap)"
+
+  - model_name: code-fast
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+    model_info:
+      description: "Fast coding fallback — Groq Llama 3.3 70B"
+
+  - model_name: code-fast
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      description: "Fast coding fallback — GPT-4o Mini"
+
+  # ───────── Heavy coding (architecture, complex refactoring, debugging) ────
+  - model_name: code-heavy
+    litellm_params:
+      model: anthropic/claude-opus-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      description: "Heavy coding — Claude Opus 4.5 (most capable)"
+
+  - model_name: code-heavy
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      description: "Heavy coding fallback — GPT-4o"
+
+  # ───────── Code review specialised alias ──────────────────────────────────
+  - model_name: code-review
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+    model_info:
+      description: "Code review — Claude Sonnet 4.5"
+
+  - model_name: code-review
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      description: "Code review fallback — GPT-4o"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  GENERAL MODELS
+  # ════════════════════════════════════════════════════════════════════════════
+
   # ───────── OpenAI ─────────
   - model_name: gpt-4o
     litellm_params:
@@ -48,6 +134,11 @@ model_list:
   - model_name: gpt-3.5-turbo
     litellm_params:
       model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: o3-mini
+    litellm_params:
+      model: openai/o3-mini
       api_key: os.environ/OPENAI_API_KEY
 
   # ───────── Anthropic ─────────
@@ -77,6 +168,11 @@ model_list:
       model: gemini/gemini-1.5-pro
       api_key: os.environ/GOOGLE_API_KEY
 
+  - model_name: gemini-2.5-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro-preview-05-06
+      api_key: os.environ/GOOGLE_API_KEY
+
   # ───────── Groq (fast inference) ─────────
   - model_name: llama-3.3-70b
     litellm_params:
@@ -104,10 +200,25 @@ model_list:
       model: mistral/mistral-small-latest
       api_key: os.environ/MISTRAL_API_KEY
 
+  - model_name: codestral
+    litellm_params:
+      model: mistral/codestral-latest
+      api_key: os.environ/MISTRAL_API_KEY
+
   # ───────── Together AI (open source models) ─────────
   - model_name: together-llama-3.1-405b
     litellm_params:
       model: together_ai/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo
+      api_key: os.environ/TOGETHER_API_KEY
+
+  - model_name: together-qwen-coder-32b
+    litellm_params:
+      model: together_ai/Qwen/Qwen2.5-Coder-32B-Instruct
+      api_key: os.environ/TOGETHER_API_KEY
+
+  - model_name: together-deepseek-v3
+    litellm_params:
+      model: together_ai/deepseek-ai/DeepSeek-V3
       api_key: os.environ/TOGETHER_API_KEY
 
   # ───────── Cohere ─────────
@@ -116,10 +227,22 @@ model_list:
       model: cohere/command-r-plus
       api_key: os.environ/COHERE_API_KEY
 
+  # ───────── DeepSeek (coding specialist) ─────────
+  - model_name: deepseek-coder
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # ════════════════════════════════════════════════════════════════════════════
+  #  LOCAL MODELS
+  # ════════════════════════════════════════════════════════════════════════════
+
   # ───────── Local Ollama (via sidecar container) ─────────
-  # These activate automatically when Ollama container is running.
-  # Run: docker compose --profile ollama up
-  # Then pull models: docker exec ai-ollama ollama pull llama3.2
   - model_name: ollama/llama3.2
     litellm_params:
       model: ollama/llama3.2
@@ -140,17 +263,28 @@ model_list:
       model: ollama/phi3
       api_base: os.environ/OLLAMA_BASE_URL
 
+  - model_name: ollama/deepseek-coder-v2
+    litellm_params:
+      model: ollama/deepseek-coder-v2
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama/qwen2.5-coder
+    litellm_params:
+      model: ollama/qwen2.5-coder
+      api_base: os.environ/OLLAMA_BASE_URL
+
+  - model_name: ollama/starcoder2
+    litellm_params:
+      model: ollama/starcoder2
+      api_base: os.environ/OLLAMA_BASE_URL
+
   # ───────── vLLM (high-throughput local inference) ─────────
-  # Activate with: docker compose --profile vllm up
-  # or for GH200:  docker compose -f docker-compose.yml -f docker-compose.gh200.yml --profile vllm up
-  # Set VLLM_MODEL in .env to choose the model.
   - model_name: vllm/local
     litellm_params:
       model: openai/local
       api_base: http://vllm:8000/v1
       api_key: "none"
 
-  # Alias matching the exact HF model name for convenience
   - model_name: vllm/llama-3.2-3b
     litellm_params:
       model: openai/meta-llama/Llama-3.2-3B-Instruct

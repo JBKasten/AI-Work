@@ -24,3 +24,10 @@ __pycache__/
 # Logs
 *.log
 logs/
+
+# Authelia runtime
+authelia/db.sqlite3
+authelia/notification.txt
+
+# Sandbox workspace
+sandbox/workspace/
