@@ -554,7 +554,7 @@ class AgentLoop:
         if result.get("matches"):
             parts.append(result["matches"][:3000])
         if result.get("files"):
-            parts.append("\n".join(result["files"][:50]))
+            parts.append("\n".join(str(f) for f in result["files"][:50]))
         if result.get("written"):
             parts.append(f"Wrote: {result['written']}")
         if result.get("status") == "finished":

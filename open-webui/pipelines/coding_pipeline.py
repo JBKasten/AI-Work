@@ -55,19 +55,27 @@ class Pipeline:
         if self.valves.litellm_key:
             headers["Authorization"] = f"Bearer {self.valves.litellm_key}"
 
-        resp = requests.post(
-            f"{self.valves.litellm_url}/v1/chat/completions",
-            headers=headers,
-            json={
-                "model": self.valves.model,
-                "messages": messages,
-                "temperature": 0.1,
-                "stream": stream,
-            },
-            timeout=120,
-        )
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        try:
+            resp = requests.post(
+                f"{self.valves.litellm_url}/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": self.valves.model,
+                    "messages": messages,
+                    "temperature": 0.1,
+                    "stream": stream,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.ConnectionError:
+            return "ERROR: Cannot reach LLM service. Is LiteLLM running?"
+        except requests.Timeout:
+            return "ERROR: LLM request timed out."
+        except (KeyError, IndexError) as e:
+            return f"ERROR: Unexpected LLM response format: {e}"
 
     def pipe(self, body: dict) -> Generator[str, None, None]:
         """
@@ -187,17 +195,19 @@ class Pipeline:
             elif len(new_blocks) == 1:
                 solution_code = new_blocks[0]
 
-    def _extract_code_blocks(self, text: str) -> list[str]:
+    def _extract_code_blocks(self, text: str) -> "list[str]":
         """Extract code blocks from markdown."""
         blocks = []
         in_block = False
         current = []
 
         for line in text.split("\n"):
-            if line.strip().startswith("```") and not in_block:
+            stripped = line.strip()
+            if stripped.startswith("```") and not in_block:
                 in_block = True
                 current = []
-            elif line.strip() == "```" and in_block:
+            elif stripped.startswith("```") and in_block:
+                # Closing fence: ``` or ```  (with optional trailing whitespace)
                 in_block = False
                 blocks.append("\n".join(current))
             elif in_block:

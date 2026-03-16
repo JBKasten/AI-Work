@@ -33,6 +33,12 @@ services:
       - ./open-webui/pipelines:/app/pipelines
     environment:
       - PIPELINES_DIR=/app/pipelines
+      - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9099/health"]
       interval: 10s
