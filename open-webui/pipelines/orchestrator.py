@@ -2,7 +2,7 @@
 title: Agent Orchestrator
 description: Multi-agent coordinator. Routes tasks to the right specialist agent (SWE, QA, Review) and can chain agents together for complex workflows.
 author: AI Stack
-version: 1.0.0
+version: 1.1.0
 """
 
 import json
@@ -13,8 +13,11 @@ import requests
 from typing import Generator
 from pydantic import BaseModel, Field
 
-sys.path.insert(0, os.path.dirname(__file__))
-from agent_framework import ToolRegistry, AgentLoop
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_framework import (
+    ToolRegistry, AgentLoop,
+    SWE_SYSTEM_PROMPT, QA_SYSTEM_PROMPT, REVIEW_SYSTEM_PROMPT,
+)
 
 
 ROUTER_PROMPT = """You are an AI project manager that routes tasks to specialist agents.
@@ -23,7 +26,7 @@ Available agents:
 1. **SWE Agent** — Writes code, implements features, fixes bugs. Use for: "build X", "implement Y", "fix Z", "create a function that..."
 2. **QA Agent** — Writes tests, finds bugs, ensures quality. Use for: "test X", "find bugs in Y", "write tests for Z", "is this code correct?"
 3. **Review Agent** — Reviews code quality, security, performance. Use for: "review X", "is this secure?", "check quality of Y"
-4. **Full Pipeline** — Chains: SWE builds → QA tests → Review checks. Use for: "build and test X", "complete implementation of Y", complex multi-step tasks.
+4. **Full Pipeline** — Chains: SWE builds -> QA tests -> Review checks. Use for: "build and test X", "complete implementation of Y", complex multi-step tasks.
 
 Analyze the user's request and respond with EXACTLY one JSON block:
 ```json
@@ -31,10 +34,10 @@ Analyze the user's request and respond with EXACTLY one JSON block:
 ```
 
 Examples:
-- "Write a binary search" → {"route": "swe", "task": "Implement binary search with edge case handling", "language": "python"}
-- "Test this sort function" → {"route": "qa", "task": "Write comprehensive tests for the sort function", "language": "python"}
-- "Review my API code" → {"route": "review", "task": "Review this API code for security, performance, and correctness", "language": "python"}
-- "Build a REST API with tests" → {"route": "full", "task": "Build a REST API with full test coverage", "language": "python"}
+- "Write a binary search" -> {"route": "swe", "task": "Implement binary search with edge case handling", "language": "python"}
+- "Test this sort function" -> {"route": "qa", "task": "Write comprehensive tests for the sort function", "language": "python"}
+- "Review my API code" -> {"route": "review", "task": "Review this API code for security, performance, and correctness", "language": "python"}
+- "Build a REST API with tests" -> {"route": "full", "task": "Build a REST API with full test coverage", "language": "python"}
 """
 
 
@@ -59,13 +62,17 @@ class Pipeline:
         if self.valves.litellm_key:
             headers["Authorization"] = f"Bearer {self.valves.litellm_key}"
 
-        resp = requests.post(
-            f"{self.valves.litellm_url}/v1/chat/completions",
-            headers=headers,
-            json={"model": model, "messages": messages, "temperature": 0.0, "max_tokens": 500},
-            timeout=30,
-        )
-        return resp.json()["choices"][0]["message"]["content"]
+        try:
+            resp = requests.post(
+                f"{self.valves.litellm_url}/v1/chat/completions",
+                headers=headers,
+                json={"model": model, "messages": messages, "temperature": 0.0, "max_tokens": 500},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            return f'{{"route": "swe", "task": "Error routing: {e}", "language": "python"}}'
 
     def _route_task(self, user_msg: str) -> dict:
         """Use a fast model to decide which agent handles this."""
@@ -122,7 +129,6 @@ class Pipeline:
         route = self._route_task(user_msg)
         agent_type = route.get("route", "swe")
         task = route.get("task", user_msg)
-        language = route.get("language", "python")
 
         tools = ToolRegistry(
             sandbox_url=self.valves.sandbox_url,
@@ -132,18 +138,13 @@ class Pipeline:
         )
         tool_desc = tools.get_tool_descriptions()
 
-        # Import agent system prompts
-        from swe_agent import SYSTEM_PROMPT as SWE_PROMPT
-        from qa_agent import SYSTEM_PROMPT as QA_PROMPT
-        from review_agent import SYSTEM_PROMPT as REVIEW_PROMPT
-
         if agent_type == "swe":
             yield f"**Routing to:** SWE Agent ({self.valves.swe_model})\n"
             yield f"**Task:** {task}\n\n"
             yield "---\n\n## SWE Agent\n\n"
             yield from self._run_agent(
                 "SWE", self.valves.swe_model,
-                SWE_PROMPT.format(tools=tool_desc),
+                SWE_SYSTEM_PROMPT.format(tools=tool_desc),
                 task, tools, prior,
             )
 
@@ -153,7 +154,7 @@ class Pipeline:
             yield "---\n\n## QA Agent\n\n"
             yield from self._run_agent(
                 "QA", self.valves.qa_model,
-                QA_PROMPT.format(tools=tool_desc),
+                QA_SYSTEM_PROMPT.format(tools=tool_desc),
                 task, tools, prior,
             )
 
@@ -163,57 +164,56 @@ class Pipeline:
             yield "---\n\n## Code Review Agent\n\n"
             yield from self._run_agent(
                 "Review", self.valves.review_model,
-                REVIEW_PROMPT.format(tools=tool_desc),
+                REVIEW_SYSTEM_PROMPT.format(tools=tool_desc),
                 task, tools, prior,
             )
 
         elif agent_type == "full":
-            yield f"**Running full pipeline:** SWE → QA → Review\n"
+            yield f"**Running full pipeline:** SWE -> QA -> Review\n"
             yield f"**Task:** {task}\n\n"
 
             # Phase 1: SWE builds it
-            yield "---\n\n## Phase 1: SWE Agent — Build\n\n"
+            yield "---\n\n## Phase 1: SWE Agent -- Build\n\n"
             swe_output = []
             for chunk in self._run_agent(
                 "SWE", self.valves.swe_model,
-                SWE_PROMPT.format(tools=tool_desc),
+                SWE_SYSTEM_PROMPT.format(tools=tool_desc),
                 task, tools, prior,
             ):
                 swe_output.append(chunk)
                 yield chunk
 
             # Phase 2: QA tests it
-            yield "\n\n---\n\n## Phase 2: QA Agent — Test\n\n"
+            yield "\n\n---\n\n## Phase 2: QA Agent -- Test\n\n"
             qa_context = [{
                 "role": "assistant",
                 "content": "".join(swe_output),
             }]
             for chunk in self._run_agent(
                 "QA", self.valves.qa_model,
-                QA_PROMPT.format(tools=tool_desc),
+                QA_SYSTEM_PROMPT.format(tools=tool_desc),
                 f"The SWE agent just built the following. Test it thoroughly and find any bugs:\n\n{task}",
                 tools, qa_context,
             ):
                 yield chunk
 
             # Phase 3: Review checks it
-            yield "\n\n---\n\n## Phase 3: Code Review Agent — Review\n\n"
+            yield "\n\n---\n\n## Phase 3: Code Review Agent -- Review\n\n"
             for chunk in self._run_agent(
                 "Review", self.valves.review_model,
-                REVIEW_PROMPT.format(tools=tool_desc),
+                REVIEW_SYSTEM_PROMPT.format(tools=tool_desc),
                 f"Review the code that was just built and tested for the task: {task}\nList the files and review them.",
                 tools, [],
             ):
                 yield chunk
 
             yield "\n\n---\n\n## Pipeline Complete\n\n"
-            yield "All three phases (Build → Test → Review) are done.\n"
+            yield "All three phases (Build -> Test -> Review) are done.\n"
 
         else:
-            # Fallback: SWE
             yield f"**Defaulting to:** SWE Agent\n\n"
             yield from self._run_agent(
                 "SWE", self.valves.swe_model,
-                SWE_PROMPT.format(tools=tool_desc),
+                SWE_SYSTEM_PROMPT.format(tools=tool_desc),
                 task, tools, prior,
             )

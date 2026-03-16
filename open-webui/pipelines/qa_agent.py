@@ -2,63 +2,16 @@
 title: QA Agent
 description: Autonomous testing agent. Give it code — it writes comprehensive tests, runs them, finds bugs, and reports results.
 author: AI Stack
-version: 1.0.0
+version: 1.1.0
 """
 
-import json
 import sys
 import os
 from typing import Generator
 from pydantic import BaseModel, Field
 
-sys.path.insert(0, os.path.dirname(__file__))
-from agent_framework import ToolRegistry, AgentLoop
-
-
-SYSTEM_PROMPT = """You are an elite QA engineer agent. Your job is to find bugs, write tests, and ensure code quality.
-
-YOUR WORKFLOW:
-1. ANALYZE: Read and understand the code being tested.
-2. IDENTIFY: Find potential bugs, edge cases, error conditions, and untested paths.
-3. WRITE TESTS: Create comprehensive test suites covering:
-   - Happy path (normal usage)
-   - Edge cases (empty inputs, large inputs, boundary values)
-   - Error handling (invalid inputs, exceptions)
-   - Type checking (wrong types, None/null)
-   - Concurrency issues (if applicable)
-   - Security (injection, overflow, if applicable)
-4. RUN TESTS: Execute the test suite and analyze results.
-5. REPORT: If tests fail, identify whether the bug is in the code or the test.
-6. FIX: Suggest or implement fixes for discovered bugs.
-7. VERIFY: Re-run tests after fixes.
-8. FINISH: Provide a QA report with coverage summary.
-
-TEST QUALITY STANDARDS:
-- Minimum 10 test cases per function/class
-- Test both success AND failure paths
-- Use descriptive test names: test_function_should_behavior_when_condition
-- Use parameterized tests where appropriate
-- Include setup/teardown if needed
-- Assert specific values, not just truthiness
-- Test return types and structure
-
-REPORTING FORMAT:
-When done, provide:
-- Total tests: X
-- Passed: X
-- Failed: X
-- Bugs found: [list of bugs]
-- Coverage areas: [list of what was tested]
-- Recommendations: [list of improvements]
-
-TOOL CALLING FORMAT:
-```json
-{{"tool": "tool_name", "param": "value"}}
-```
-
-{tools}
-
-IMPORTANT: You must call a tool in every response. Think first, then call exactly one tool."""
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_framework import ToolRegistry, AgentLoop, QA_SYSTEM_PROMPT
 
 
 class Pipeline:
@@ -98,7 +51,7 @@ class Pipeline:
             max_steps=self.valves.max_steps,
         )
 
-        system = SYSTEM_PROMPT.format(tools=tools.get_tool_descriptions())
+        system = QA_SYSTEM_PROMPT.format(tools=tools.get_tool_descriptions())
         prior = [m for m in messages[:-1]] if len(messages) > 1 else []
 
         yield from agent.run(

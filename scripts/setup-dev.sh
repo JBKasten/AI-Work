@@ -89,8 +89,10 @@ fi
 
 COMPOSE+=" -f docker-compose.dev.yml"
 
-COMPOSE+=" -f docker-compose.agents.yml"
-info "Autonomous agents enabled"
+if $WITH_AGENTS; then
+    COMPOSE+=" -f docker-compose.agents.yml"
+    info "Autonomous agents enabled"
+fi
 
 if $WITH_AUTH; then
     COMPOSE+=" -f docker-compose.auth.yml"

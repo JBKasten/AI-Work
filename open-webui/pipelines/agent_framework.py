@@ -2,15 +2,171 @@
 title: Agent Framework
 description: Base framework for autonomous AI agents with ReAct loop, tool calling, and streaming output.
 author: AI Stack
-version: 1.0.0
+version: 1.1.0
 """
 
+import base64
 import json
 import re
 import requests
 import time
-from typing import Generator, Optional
+from typing import Dict, Generator, List, Optional
 from pydantic import BaseModel, Field
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  System Prompts — shared by agents and orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+SWE_SYSTEM_PROMPT = """You are an elite autonomous software engineer agent. You solve coding problems end-to-end with zero hand-holding.
+
+YOUR WORKFLOW:
+1. UNDERSTAND: Break down the task. Identify what needs to be built.
+2. PLAN: Outline your approach in 2-3 sentences.
+3. IMPLEMENT: Write the code using write_file.
+4. TEST: Write comprehensive tests and run them using run_tests.
+5. FIX: If tests fail, analyze failures and fix the code. Repeat until green.
+6. VERIFY: Run the final code to make sure it works.
+7. FINISH: Use the finish tool with a summary of what you built.
+
+RULES:
+- ALWAYS write tests. No exceptions. Test edge cases.
+- ALWAYS run tests before declaring done.
+- If tests fail, FIX the code (not the tests) unless the tests are wrong.
+- Write clean, production-quality code. No shortcuts.
+- Handle errors properly. Validate inputs at boundaries.
+- Use type hints (Python), types (TypeScript), or equivalent.
+- One tool call per response. Think first, then act.
+- After EVERY tool call, analyze the result and decide the next step.
+
+TOOL CALLING FORMAT:
+When you want to use a tool, output EXACTLY one JSON block:
+```json
+{{"tool": "tool_name", "param": "value"}}
+```
+
+{tools}
+
+IMPORTANT: You must call a tool in every response. Think step by step, then call exactly one tool."""
+
+
+QA_SYSTEM_PROMPT = """You are an elite QA engineer agent. Your job is to find bugs, write tests, and ensure code quality.
+
+YOUR WORKFLOW:
+1. ANALYZE: Read and understand the code being tested.
+2. IDENTIFY: Find potential bugs, edge cases, error conditions, and untested paths.
+3. WRITE TESTS: Create comprehensive test suites covering:
+   - Happy path (normal usage)
+   - Edge cases (empty inputs, large inputs, boundary values)
+   - Error handling (invalid inputs, exceptions)
+   - Type checking (wrong types, None/null)
+   - Concurrency issues (if applicable)
+   - Security (injection, overflow, if applicable)
+4. RUN TESTS: Execute the test suite and analyze results.
+5. REPORT: If tests fail, identify whether the bug is in the code or the test.
+6. FIX: Suggest or implement fixes for discovered bugs.
+7. VERIFY: Re-run tests after fixes.
+8. FINISH: Provide a QA report with coverage summary.
+
+TEST QUALITY STANDARDS:
+- Minimum 10 test cases per function/class
+- Test both success AND failure paths
+- Use descriptive test names: test_function_should_behavior_when_condition
+- Use parameterized tests where appropriate
+- Include setup/teardown if needed
+- Assert specific values, not just truthiness
+- Test return types and structure
+
+REPORTING FORMAT:
+When done, provide:
+- Total tests: X
+- Passed: X
+- Failed: X
+- Bugs found: [list of bugs]
+- Coverage areas: [list of what was tested]
+- Recommendations: [list of improvements]
+
+TOOL CALLING FORMAT:
+```json
+{{"tool": "tool_name", "param": "value"}}
+```
+
+{tools}
+
+IMPORTANT: You must call a tool in every response. Think first, then call exactly one tool."""
+
+
+REVIEW_SYSTEM_PROMPT = """You are an elite code review agent. You perform thorough, rigorous code reviews like a senior engineer at a top tech company.
+
+YOUR WORKFLOW:
+1. READ: Understand the code thoroughly. Read every file.
+2. LINT: Run the linter to catch style issues and simple bugs.
+3. ANALYZE: Run static analysis for complexity, security, and dead code.
+4. TEST: If tests exist, run them. If not, note the gap.
+5. REVIEW: Provide a detailed, constructive review.
+6. FINISH: Deliver the final review report.
+
+REVIEW CRITERIA (check ALL of these):
+
+**Correctness:**
+- Does the code do what it's supposed to?
+- Are there off-by-one errors, null dereferences, race conditions?
+- Are error cases handled?
+
+**Security:**
+- SQL injection, XSS, command injection?
+- Secrets in code?
+- Input validation at boundaries?
+
+**Performance:**
+- Unnecessary loops, N+1 queries, missing indexes?
+- Memory leaks, unbounded growth?
+- Could anything be cached?
+
+**Maintainability:**
+- Clear naming, single responsibility?
+- Is the code self-documenting?
+- Are there magic numbers or strings?
+
+**Testing:**
+- Are there tests? Are they comprehensive?
+- Do they test edge cases?
+- Is coverage adequate?
+
+**Architecture:**
+- Is the abstraction level right?
+- Are dependencies reasonable?
+- Is the code modular and extensible?
+
+REVIEW FORMAT:
+Use this structure for the final review:
+
+### Summary
+One paragraph overview.
+
+### Severity: Critical
+- [List of must-fix issues]
+
+### Severity: Major
+- [List of should-fix issues]
+
+### Severity: Minor
+- [List of nice-to-fix issues]
+
+### Positive Feedback
+- [What's done well]
+
+### Verdict
+APPROVE / REQUEST CHANGES / NEEDS DISCUSSION
+
+TOOL CALLING FORMAT:
+```json
+{{"tool": "tool_name", "param": "value"}}
+```
+
+{tools}
+
+IMPORTANT: You must call a tool in every response. Be thorough but efficient. Think first, then call exactly one tool."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -72,132 +228,173 @@ class ToolRegistry:
         tool = tool_call.get("tool", "")
 
         try:
-            if tool == "execute_code":
-                return self._execute_code(tool_call)
-            elif tool == "run_tests":
-                return self._run_tests(tool_call)
-            elif tool == "lint_code":
-                return self._lint_code(tool_call)
-            elif tool == "analyze_code":
-                return self._analyze_code(tool_call)
-            elif tool == "read_file":
-                return self._read_file(tool_call)
-            elif tool == "write_file":
-                return self._write_file(tool_call)
-            elif tool == "list_files":
-                return self._list_files(tool_call)
-            elif tool == "shell":
-                return self._shell(tool_call)
-            elif tool == "git_clone":
-                return self._git_clone(tool_call)
-            elif tool == "search_code":
-                return self._search_code(tool_call)
-            elif tool == "finish":
+            dispatch = {
+                "execute_code": self._execute_code,
+                "run_tests": self._run_tests,
+                "lint_code": self._lint_code,
+                "analyze_code": self._analyze_code,
+                "read_file": self._read_file,
+                "write_file": self._write_file,
+                "list_files": self._list_files,
+                "shell": self._shell,
+                "git_clone": self._git_clone,
+                "search_code": self._search_code,
+            }
+
+            if tool == "finish":
                 return {"status": "finished", "summary": tool_call.get("summary", "")}
+            elif tool in dispatch:
+                return dispatch[tool](tool_call)
             else:
                 return {"error": f"Unknown tool: {tool}"}
+        except requests.ConnectionError as e:
+            return {"error": f"Service unavailable ({tool}): cannot reach backend. Is the sandbox running?"}
+        except requests.Timeout:
+            return {"error": f"Timeout: {tool} took too long to respond."}
         except Exception as e:
             return {"error": f"Tool execution failed: {str(e)}"}
 
-    def _sandbox_exec(self, code: str, language: str = "bash", timeout: int = 30) -> dict:
+    def _sandbox_post(self, endpoint: str, payload: dict, timeout: int = 35) -> dict:
+        """POST to sandbox with error handling."""
         resp = requests.post(
-            f"{self.sandbox_url}/execute",
-            json={"code": code, "language": language, "timeout": timeout},
-            timeout=timeout + 5,
+            f"{self.sandbox_url}/{endpoint}",
+            json=payload,
+            timeout=timeout,
         )
+        resp.raise_for_status()
         return resp.json()
 
     def _execute_code(self, call: dict) -> dict:
-        resp = requests.post(
-            f"{self.sandbox_url}/execute",
-            json={
-                "code": call.get("code", ""),
-                "language": call.get("language", "python"),
-                "stdin": call.get("stdin", ""),
-                "timeout": call.get("timeout", 30),
-            },
-            timeout=35,
-        )
-        return resp.json()
+        return self._sandbox_post("execute", {
+            "code": call.get("code", ""),
+            "language": call.get("language", "python"),
+            "stdin": call.get("stdin", ""),
+            "timeout": call.get("timeout", 30),
+        }, timeout=35)
 
     def _run_tests(self, call: dict) -> dict:
-        resp = requests.post(
-            f"{self.sandbox_url}/test",
-            json={
-                "files": call.get("files", {}),
-                "language": call.get("language", "python"),
-                "test_command": call.get("test_command", ""),
-                "timeout": 60,
-            },
-            timeout=65,
-        )
-        return resp.json()
+        return self._sandbox_post("test", {
+            "files": call.get("files", {}),
+            "language": call.get("language", "python"),
+            "test_command": call.get("test_command", ""),
+            "timeout": 60,
+        }, timeout=65)
 
     def _lint_code(self, call: dict) -> dict:
-        resp = requests.post(
-            f"{self.sandbox_url}/lint",
-            json={
-                "code": call.get("code", ""),
-                "language": call.get("language", "python"),
-                "fix": call.get("fix", True),
-            },
-            timeout=20,
-        )
-        return resp.json()
+        return self._sandbox_post("lint", {
+            "code": call.get("code", ""),
+            "language": call.get("language", "python"),
+            "fix": call.get("fix", True),
+        }, timeout=20)
 
     def _analyze_code(self, call: dict) -> dict:
-        resp = requests.post(
-            f"{self.sandbox_url}/analyze",
-            json={
-                "code": call.get("code", ""),
-                "language": "python",
-                "checks": call.get("checks", ["complexity", "security", "dead_code"]),
-            },
-            timeout=30,
-        )
-        return resp.json()
+        return self._sandbox_post("analyze", {
+            "code": call.get("code", ""),
+            "language": "python",
+            "checks": call.get("checks", ["complexity", "security", "dead_code"]),
+        }, timeout=30)
 
     def _read_file(self, call: dict) -> dict:
+        """Read a file via execute_code to avoid shell injection."""
         path = call.get("path", "")
-        result = self._sandbox_exec(f"cat '{path}' 2>&1", "bash", 5)
+        # Use Python to read files safely — no shell injection possible
+        code = f"import sys\ntry:\n    print(open({path!r}).read())\nexcept Exception as e:\n    print(f'Error: {{e}}', file=sys.stderr)"
+        result = self._sandbox_post("execute", {
+            "code": code, "language": "python", "timeout": 5,
+        }, timeout=10)
         return {"content": result.get("stdout", ""), "error": result.get("stderr", "")}
 
     def _write_file(self, call: dict) -> dict:
+        """Write a file via execute_code to avoid shell injection."""
         path = call.get("path", "")
         content = call.get("content", "")
-        # Use heredoc to safely write content
-        script = f"mkdir -p \"$(dirname '{path}')\" && cat > '{path}' << 'AGENT_EOF'\n{content}\nAGENT_EOF"
-        result = self._sandbox_exec(script, "bash", 5)
-        return {"written": path, "exit_code": result.get("exit_code", -1)}
+        # Use Python to write files safely — base64 to avoid any escaping issues
+        b64 = base64.b64encode(content.encode()).decode()
+        code = (
+            f"import base64, os, sys\n"
+            f"path = {path!r}\n"
+            f"data = base64.b64decode({b64!r})\n"
+            f"os.makedirs(os.path.dirname(path) or '.', exist_ok=True)\n"
+            f"with open(path, 'wb') as f:\n"
+            f"    f.write(data)\n"
+            f"print(f'Wrote {{len(data)}} bytes to {{path}}')"
+        )
+        result = self._sandbox_post("execute", {
+            "code": code, "language": "python", "timeout": 5,
+        }, timeout=10)
+        exit_code = result.get("exit_code", -1)
+        return {"written": path, "exit_code": exit_code, "stdout": result.get("stdout", ""), "stderr": result.get("stderr", "")}
 
     def _list_files(self, call: dict) -> dict:
+        """List files via Python os.walk — no shell injection."""
         path = call.get("path", ".")
-        result = self._sandbox_exec(f"find '{path}' -type f | head -100", "bash", 5)
-        return {"files": result.get("stdout", "").strip().split("\n")}
+        code = (
+            f"import os\n"
+            f"for root, dirs, files in os.walk({path!r}):\n"
+            f"    for f in sorted(files)[:200]:\n"
+            f"        print(os.path.join(root, f))\n"
+        )
+        result = self._sandbox_post("execute", {
+            "code": code, "language": "python", "timeout": 5,
+        }, timeout=10)
+        stdout = result.get("stdout", "").strip()
+        return {"files": stdout.split("\n") if stdout else []}
 
     def _shell(self, call: dict) -> dict:
+        """Execute a shell command in the sandbox."""
         cmd = call.get("command", "")
-        result = self._sandbox_exec(cmd, "bash", call.get("timeout", 30))
-        return result
+        return self._sandbox_post("execute", {
+            "code": cmd, "language": "bash", "timeout": call.get("timeout", 30),
+        }, timeout=call.get("timeout", 30) + 5)
 
     def _git_clone(self, call: dict) -> dict:
         url = call.get("url", "")
         branch = call.get("branch", "")
         dest = call.get("dest", "repo")
-        cmd = f"git clone --depth 1"
-        if branch:
-            cmd += f" -b '{branch}'"
-        cmd += f" '{url}' '{dest}' 2>&1"
-        result = self._sandbox_exec(cmd, "bash", 120)
-        return result
+        # Use Python subprocess to avoid shell injection
+        code = (
+            f"import subprocess, sys\n"
+            f"cmd = ['git', 'clone', '--depth', '1']\n"
+            f"branch = {branch!r}\n"
+            f"if branch:\n"
+            f"    cmd += ['-b', branch]\n"
+            f"cmd += [{url!r}, {dest!r}]\n"
+            f"r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)\n"
+            f"print(r.stdout)\n"
+            f"if r.stderr:\n"
+            f"    print(r.stderr, file=sys.stderr)\n"
+            f"sys.exit(r.returncode)"
+        )
+        return self._sandbox_post("execute", {
+            "code": code, "language": "python", "timeout": 120,
+        }, timeout=125)
 
     def _search_code(self, call: dict) -> dict:
+        """Search files using Python — no shell injection."""
         pattern = call.get("pattern", "")
         path = call.get("path", ".")
-        result = self._sandbox_exec(
-            f"grep -rn '{pattern}' '{path}' --include='*.py' --include='*.js' --include='*.ts' --include='*.go' --include='*.rs' 2>&1 | head -50",
-            "bash", 10,
+        code = (
+            f"import os, re\n"
+            f"pattern = re.compile({pattern!r})\n"
+            f"exts = {{'.py', '.js', '.ts', '.go', '.rs', '.jsx', '.tsx'}}\n"
+            f"count = 0\n"
+            f"for root, dirs, files in os.walk({path!r}):\n"
+            f"    for fname in sorted(files):\n"
+            f"        if os.path.splitext(fname)[1] in exts:\n"
+            f"            fpath = os.path.join(root, fname)\n"
+            f"            try:\n"
+            f"                for i, line in enumerate(open(fpath), 1):\n"
+            f"                    if pattern.search(line):\n"
+            f"                        print(f'{{fpath}}:{{i}}: {{line.rstrip()}}')\n"
+            f"                        count += 1\n"
+            f"                        if count >= 50:\n"
+            f"                            raise SystemExit\n"
+            f"            except (UnicodeDecodeError, PermissionError):\n"
+            f"                pass\n"
         )
+        result = self._sandbox_post("execute", {
+            "code": code, "language": "python", "timeout": 10,
+        }, timeout=15)
         return {"matches": result.get("stdout", "")}
 
 
@@ -225,22 +422,30 @@ class AgentLoop:
         if self.litellm_key:
             headers["Authorization"] = f"Bearer {self.litellm_key}"
 
-        resp = requests.post(
-            f"{self.litellm_url}/v1/chat/completions",
-            headers=headers,
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.1,
-                "max_tokens": 8192,
-            },
-            timeout=120,
-        )
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        try:
+            resp = requests.post(
+                f"{self.litellm_url}/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": 0.1,
+                    "max_tokens": 8192,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.ConnectionError:
+            return '{"tool": "finish", "summary": "ERROR: Cannot reach LLM service. Is LiteLLM running?"}'
+        except requests.Timeout:
+            return '{"tool": "finish", "summary": "ERROR: LLM request timed out after 120s."}'
+        except (KeyError, IndexError) as e:
+            return f'{{"tool": "finish", "summary": "ERROR: Unexpected LLM response: {e}"}}'
 
     def run(self, system_prompt: str, user_message: str,
-            conversation: list = None) -> Generator[str, None, None]:
+            conversation: Optional[list] = None) -> Generator[str, None, None]:
         """
         Run the agent loop. Yields markdown-formatted output for streaming.
         """
@@ -266,40 +471,37 @@ class AgentLoop:
                 yield "\n*No tool call detected. Agent stopping.*\n"
                 return
 
-            # ACT & OBSERVE: Execute each tool call
-            for tc in tool_calls:
-                tool_name = tc.get("tool", "unknown")
+            # ACT & OBSERVE: Execute first tool call
+            tc = tool_calls[0]
+            tool_name = tc.get("tool", "unknown")
 
-                if tool_name == "finish":
-                    summary = tc.get("summary", "Task complete.")
-                    yield f"\n### Agent Complete\n\n{summary}\n"
-                    return
+            if tool_name == "finish":
+                summary = tc.get("summary", "Task complete.")
+                yield f"\n### Agent Complete\n\n{summary}\n"
+                return
 
-                yield f"**Executing:** `{tool_name}`\n\n"
+            yield f"**Executing:** `{tool_name}`\n\n"
 
-                result = self.tools.execute(tc)
-                result_str = self._format_result(result)
+            result = self.tools.execute(tc)
+            result_str = self._format_result(result)
 
-                yield f"**Result:**\n```\n{result_str}\n```\n\n"
+            yield f"**Result:**\n```\n{result_str}\n```\n\n"
 
-                # Add to conversation for next iteration
-                messages.append({"role": "assistant", "content": response})
-                messages.append({
-                    "role": "user",
-                    "content": f"Tool result for {tool_name}:\n```\n{result_str}\n```\n\nContinue with the next step. If the task is complete, use the finish tool.",
-                })
-
-                # Only process first tool call per step to keep context clean
-                break
+            # Add to conversation for next iteration
+            messages.append({"role": "assistant", "content": response})
+            messages.append({
+                "role": "user",
+                "content": f"Tool result for {tool_name}:\n```\n{result_str}\n```\n\nContinue with the next step. If the task is complete, use the finish tool.",
+            })
 
         yield "\n### Max steps reached. Agent stopping.\n"
 
-    def _extract_tool_calls(self, text: str) -> list[dict]:
+    def _extract_tool_calls(self, text: str) -> List[dict]:
         """Extract JSON tool calls from model response."""
         calls = []
 
-        # Pattern 1: ```json blocks
-        json_blocks = re.findall(r'```(?:json)?\s*\n?({.*?})\s*\n?```', text, re.DOTALL)
+        # Pattern 1: ```json blocks — use a balanced-braces approach
+        json_blocks = re.findall(r'```(?:json)?\s*\n?((?:\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}))\s*\n?```', text, re.DOTALL)
         for block in json_blocks:
             try:
                 parsed = json.loads(block)
@@ -308,16 +510,30 @@ class AgentLoop:
             except json.JSONDecodeError:
                 continue
 
-        # Pattern 2: Inline JSON with "tool" key
+        # Pattern 2: Try to find any JSON object with "tool" key
         if not calls:
-            inline = re.findall(r'(\{[^{}]*"tool"\s*:[^{}]*\})', text, re.DOTALL)
-            for match in inline:
-                try:
-                    parsed = json.loads(match)
-                    if "tool" in parsed:
-                        calls.append(parsed)
-                except json.JSONDecodeError:
-                    continue
+            # Find potential JSON by looking for balanced braces
+            for match in re.finditer(r'\{', text):
+                start = match.start()
+                depth = 0
+                end = start
+                for i in range(start, min(start + 10000, len(text))):
+                    if text[i] == '{':
+                        depth += 1
+                    elif text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if end > start:
+                    candidate = text[start:end]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict) and "tool" in parsed:
+                            calls.append(parsed)
+                            break  # Take first valid match
+                    except json.JSONDecodeError:
+                        continue
 
         return calls
 
